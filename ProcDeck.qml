@@ -14,7 +14,7 @@ Item {
   property var manifest: null
   property bool opened: false
   property var apps: []
-  property int selectedIndex: 0
+  property string selectedIdentity: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -26,6 +26,11 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   readonly property bool narrow: card.width < Style.space(760)
+  readonly property int selectedIndex: {
+    for (var i = 0; i < apps.length; i++)
+      if (apps[i].identity === selectedIdentity) return i
+    return -1
+  }
   readonly property var selectedApp: selectedIndex >= 0 && selectedIndex < apps.length
     ? apps[selectedIndex] : null
   readonly property int totalWindows: {
@@ -52,14 +57,15 @@ Item {
       var ipc = hyprlandToplevel.lastIpcObject || {}
       var workspace = hyprlandToplevel.workspace
       var workspaceId = workspace ? workspace.id : ""
+      var workspaceName = workspace ? String(workspace.name || "").trim() : ""
 
       out.push({
         id: String(hyprlandToplevel.address || i),
         handle: waylandToplevel,
         parent: waylandToplevel ? waylandToplevel.parent : null,
-        appId: String((waylandToplevel && waylandToplevel.appId) || ipc.class || ""),
+        appId: String((waylandToplevel && waylandToplevel.appId) || ""),
         title: String((waylandToplevel && waylandToplevel.title) || hyprlandToplevel.title || ipc.title || ""),
-        workspace: workspaceId > 0 ? String(workspaceId) : "",
+        workspace: workspaceName || (workspaceId ? String(workspaceId) : ""),
         activated: hyprlandToplevel.activated === true
           || (waylandToplevel && waylandToplevel.activated === true)
       })
@@ -69,13 +75,14 @@ Item {
   }
 
   function rebuild() {
-    root.apps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
+    var previousIndex = root.selectedIndex
+    var nextApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
       return DesktopEntries.heuristicLookup(appId)
     })
 
-    if (root.apps.length === 0) root.selectedIndex = -1
-    else if (root.selectedIndex < 0 || root.selectedIndex >= root.apps.length)
-      root.selectedIndex = 0
+    root.apps = nextApps
+    root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
+      root.selectedIdentity, previousIndex, nextApps)
   }
 
   function scheduleRebuild() {
@@ -304,7 +311,7 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.selectedIndex = appRow.index
+                  onClicked: root.selectedIdentity = appRow.modelData.identity
                 }
               }
 

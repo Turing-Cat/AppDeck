@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { runningApps } = require("../ProcDeckModel.js");
+const { runningApps, reconcileSelectedIdentity } = require("../ProcDeckModel.js");
 
 test("ten App Windows with four normalized identities form four Running Apps", () => {
   const snapshots = [
@@ -106,4 +106,21 @@ test("presentation metadata enriches records without changing Running App identi
       }
     ]
   );
+});
+
+test("live updates preserve the Selected App or choose the nearest remaining row", () => {
+  const app = identity => ({ identity });
+
+  assert.equal(
+    reconcileSelectedIdentity("app:editor", 1, [
+      app("app:new"), app("app:browser"), app("app:editor")
+    ]),
+    "app:editor"
+  );
+  assert.equal(
+    reconcileSelectedIdentity("app:editor", 1, [app("app:browser"), app("app:chat")]),
+    "app:chat"
+  );
+  assert.equal(reconcileSelectedIdentity("", -1, [app("app:browser")]), "app:browser");
+  assert.equal(reconcileSelectedIdentity("app:browser", 0, []), "");
 });

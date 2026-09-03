@@ -57,4 +57,22 @@ function runningApps(snapshots, desktopEntryLookup) {
   return groups;
 }
 
-if (typeof module !== "undefined") module.exports = { runningApps: runningApps };
+function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
+  if (!apps.length) return "";
+
+  for (var i = 0; i < apps.length; i++) {
+    if (apps[i].identity === previousIdentity) return previousIdentity;
+  }
+
+  var index = Number(previousIndex);
+  if (!isFinite(index)) index = 0;
+  index = Math.max(0, Math.min(apps.length - 1, Math.floor(index)));
+  return apps[index].identity;
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    runningApps: runningApps,
+    reconcileSelectedIdentity: reconcileSelectedIdentity
+  };
+}
