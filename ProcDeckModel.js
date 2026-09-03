@@ -37,6 +37,8 @@ function runningApps(snapshots, desktopEntryLookup) {
         windowCount: 0,
         workspaces: [],
         currentTitle: "",
+        activated: false,
+        focusHistoryId: null,
         windows: []
       };
       groupsByIdentity[identity] = group;
@@ -52,9 +54,61 @@ function runningApps(snapshots, desktopEntryLookup) {
     var title = String(snapshots[i].title || "").trim();
     if (title && (snapshots[i].activated || !group.currentTitle))
       group.currentTitle = title;
+
+    if (snapshots[i].activated === true) group.activated = true;
+    var focusHistoryId = snapshots[i].focusHistoryId;
+    if (focusHistoryId !== undefined && focusHistoryId !== null && focusHistoryId !== ""
+        && isFinite(Number(focusHistoryId)) && Number(focusHistoryId) >= 0
+        && (group.focusHistoryId === null || Number(focusHistoryId) < group.focusHistoryId))
+      group.focusHistoryId = Number(focusHistoryId);
   }
 
   return groups;
+}
+
+function filterRunningApps(apps, query) {
+  var terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return apps;
+
+  return apps.filter(function(app) {
+    var searchable = [app.name, app.appId].concat(app.windows.map(function(window) {
+      return window.title;
+    })).join("\n").toLowerCase();
+    return terms.every(function(term) { return searchable.indexOf(term) !== -1; });
+  });
+}
+
+function orderRunningApps(apps, previousIdentities) {
+  var previous = previousIdentities || [];
+  var source = previous.length ? previous : apps.slice().sort(function(a, b) {
+    var aRank = a.focusHistoryId === null ? Infinity : Number(a.focusHistoryId);
+    var bRank = b.focusHistoryId === null ? Infinity : Number(b.focusHistoryId);
+    return aRank === bRank ? apps.indexOf(a) - apps.indexOf(b) : aRank - bRank;
+  }).map(function(app) { return app.identity; });
+  var byIdentity = Object.create(null);
+  var seen = Object.create(null);
+  var ordered = [];
+
+  apps.forEach(function(app) { byIdentity[app.identity] = app; });
+  source.concat(apps.map(function(app) { return app.identity; })).forEach(function(identity) {
+    if (byIdentity[identity] && !seen[identity]) {
+      seen[identity] = true;
+      ordered.push(byIdentity[identity]);
+    }
+  });
+
+  for (var i = 0; i < ordered.length; i++) {
+    if (ordered[i].activated) {
+      ordered.unshift(ordered.splice(i, 1)[0]);
+      break;
+    }
+  }
+  return ordered;
+}
+
+function initialSelectedIdentity(apps) {
+  if (!apps.length) return "";
+  return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
 }
 
 function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
@@ -73,6 +127,9 @@ function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
 if (typeof module !== "undefined") {
   module.exports = {
     runningApps: runningApps,
+    filterRunningApps: filterRunningApps,
+    orderRunningApps: orderRunningApps,
+    initialSelectedIdentity: initialSelectedIdentity,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };
 }

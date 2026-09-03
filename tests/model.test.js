@@ -3,7 +3,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { runningApps, reconcileSelectedIdentity } = require("../ProcDeckModel.js");
+const {
+  runningApps,
+  filterRunningApps,
+  orderRunningApps,
+  initialSelectedIdentity,
+  reconcileSelectedIdentity
+} = require("../ProcDeckModel.js");
 
 test("ten App Windows with four normalized identities form four Running Apps", () => {
   const snapshots = [
@@ -123,4 +129,61 @@ test("live updates preserve the Selected App or choose the nearest remaining row
   );
   assert.equal(reconcileSelectedIdentity("", -1, [app("app:browser")]), "app:browser");
   assert.equal(reconcileSelectedIdentity("app:browser", 0, []), "");
+});
+
+test("a Search Query matches every term across Running App fields", () => {
+  const apps = runningApps([
+    { id: "browser", appId: "org.browser", title: "Release Notes" },
+    { id: "editor", appId: "com.editor", title: "ProcDeck README" },
+    { id: "chat", appId: "org.chat", title: "Team Room" }
+  ], appId => appId === "org.browser"
+    ? { name: "Web Browser", icon: "web-browser" }
+    : null);
+
+  assert.deepEqual([
+    filterRunningApps(apps, "WEB").map(app => app.identity),
+    filterRunningApps(apps, "com.editor").map(app => app.identity),
+    filterRunningApps(apps, "release").map(app => app.identity),
+    filterRunningApps(apps, "  web   notes ").map(app => app.identity),
+    filterRunningApps(apps, "web procdeck").map(app => app.identity)
+  ], [
+    ["app:org.browser"],
+    ["app:com.editor"],
+    ["app:org.browser"],
+    ["app:org.browser"],
+    []
+  ]);
+});
+
+test("Activity Order uses the startup seed then follows live Active App changes", () => {
+  const startup = orderRunningApps(runningApps([
+    { id: "editor", appId: "editor", focusHistoryId: 2 },
+    { id: "browser", appId: "browser", activated: true, focusHistoryId: 0 },
+    { id: "chat", appId: "chat", focusHistoryId: 1 }
+  ], () => null), []);
+  const live = orderRunningApps(runningApps([
+    { id: "new", appId: "new", focusHistoryId: 0 },
+    { id: "editor", appId: "editor", focusHistoryId: 0 },
+    { id: "browser", appId: "browser", focusHistoryId: 0 },
+    { id: "chat", appId: "chat", activated: true, focusHistoryId: 9 }
+  ], () => null), startup.map(item => item.identity));
+
+  assert.deepEqual([
+    startup.map(item => item.identity),
+    live.map(item => item.identity)
+  ], [
+    ["app:browser", "app:chat", "app:editor"],
+    ["app:chat", "app:browser", "app:editor", "app:new"]
+  ]);
+});
+
+test("opening selects the Previous App when it exists", () => {
+  const app = (identity, activated = false) => ({ identity, activated });
+
+  assert.deepEqual([
+    initialSelectedIdentity([app("app:active", true), app("app:previous"), app("app:older")]),
+    initialSelectedIdentity([app("app:recent"), app("app:older")]),
+    initialSelectedIdentity([app("app:only")]),
+    initialSelectedIdentity([])
+  ], ["app:previous", "app:recent", "app:only", ""]);
 });

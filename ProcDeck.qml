@@ -13,7 +13,10 @@ Item {
   property var shell: null
   property var manifest: null
   property bool opened: false
+  property var allApps: []
   property var apps: []
+  property var activityIdentities: []
+  property string searchQuery: ""
   property string selectedIdentity: ""
 
   property color background: Color.menu.background
@@ -35,7 +38,7 @@ Item {
     ? apps[selectedIndex] : null
   readonly property int totalWindows: {
     var total = 0
-    for (var i = 0; i < apps.length; i++) total += apps[i].windowCount
+    for (var i = 0; i < allApps.length; i++) total += allApps[i].windowCount
     return total
   }
 
@@ -66,6 +69,7 @@ Item {
         appId: String((waylandToplevel && waylandToplevel.appId) || ""),
         title: String((waylandToplevel && waylandToplevel.title) || hyprlandToplevel.title || ipc.title || ""),
         workspace: workspaceName || (workspaceId ? String(workspaceId) : ""),
+        focusHistoryId: ipc.focusHistoryID,
         activated: hyprlandToplevel.activated === true
           || (waylandToplevel && waylandToplevel.activated === true)
       })
@@ -76,13 +80,17 @@ Item {
 
   function rebuild() {
     var previousIndex = root.selectedIndex
-    var nextApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
+    var groupedApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
       return DesktopEntries.heuristicLookup(appId)
     })
+    var nextApps = ProcDeckModel.orderRunningApps(groupedApps, root.activityIdentities)
 
-    root.apps = nextApps
+    root.activityIdentities = nextApps.map(function(app) { return app.identity })
+    root.allApps = nextApps
+    root.apps = ProcDeckModel.filterRunningApps(nextApps, root.searchQuery)
     root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
-      root.selectedIdentity, previousIndex, nextApps)
+      root.selectedIdentity, previousIndex, root.apps)
+    root.revealSelected()
   }
 
   function scheduleRebuild() {
@@ -90,9 +98,46 @@ Item {
   }
 
   function open(payloadJson) {
+    root.searchQuery = ""
     root.rebuild()
+    root.selectedIdentity = ProcDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() {
+      keyCatcher.forceActiveFocus()
+      root.revealSelected()
+    })
+  }
+
+  function setSearchQuery(query) {
+    var previousIndex = root.selectedIndex
+    root.searchQuery = query
+    root.apps = ProcDeckModel.filterRunningApps(root.allApps, query)
+    root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
+      root.selectedIdentity, previousIndex, root.apps)
+    root.revealSelected()
+  }
+
+  function select(delta) {
+    if (!root.apps.length) return
+    var index = root.selectedIndex
+    if (index < 0) index = delta < 0 ? root.apps.length - 1 : 0
+    else index = ((index + delta) % root.apps.length + root.apps.length) % root.apps.length
+    root.selectedIdentity = root.apps[index].identity
+    root.revealSelected()
+  }
+
+  function selectAbsolute(index) {
+    if (!root.apps.length) return
+    index = Math.max(0, Math.min(index, root.apps.length - 1))
+    root.selectedIdentity = root.apps[index].identity
+    root.revealSelected()
+  }
+
+  function revealSelected() {
+    Qt.callLater(function() {
+      if (root.selectedIndex >= 0)
+        appList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+    })
   }
 
   function close() {
@@ -174,7 +219,36 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) {
-            root.dismiss()
+            if (root.searchQuery) root.setSearchQuery("")
+            else root.dismiss()
+            event.accepted = true
+          } else if (Util.editsFilter(event, root.searchQuery)) {
+            root.setSearchQuery(Util.editedFilter(event, root.searchQuery))
+            event.accepted = true
+          } else if (event.key === Qt.Key_Up) {
+            root.select(-1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Down) {
+            root.select(1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageUp) {
+            root.select(-6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageDown) {
+            root.select(6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Home) {
+            root.selectAbsolute(0)
+            event.accepted = true
+          } else if (event.key === Qt.Key_End) {
+            root.selectAbsolute(root.apps.length - 1)
+            event.accepted = true
+          } else if (event.text && event.text.length === 1
+                     && event.text.charCodeAt(0) >= 32
+                     && event.text.charCodeAt(0) !== 127
+                     && (event.modifiers === Qt.NoModifier
+                         || event.modifiers === Qt.ShiftModifier)) {
+            root.setSearchQuery(root.searchQuery + event.text)
             event.accepted = true
           }
         }
@@ -206,17 +280,27 @@ Item {
             }
 
             Text {
-              text: root.apps.length + (root.apps.length === 1 ? " app" : " apps")
-                + " · " + root.totalWindows
-                + (root.totalWindows === 1 ? " window" : " windows")
+              Layout.fillWidth: true
+              text: root.searchQuery || "Type to search…"
               textFormat: Text.PlainText
               color: root.foreground
-              opacity: 0.58
+              opacity: root.searchQuery ? 1 : 0.58
               font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.body
+              elide: Text.ElideRight
             }
           }
 
+          Text {
+            text: root.allApps.length + (root.allApps.length === 1 ? " app" : " apps")
+              + " · " + root.totalWindows
+              + (root.totalWindows === 1 ? " window" : " windows")
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.58
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         Rectangle {
@@ -311,7 +395,7 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.selectedIdentity = appRow.modelData.identity
+                  onClicked: root.selectAbsolute(appRow.index)
                 }
               }
 
@@ -319,7 +403,9 @@ Item {
                 visible: root.apps.length === 0
                 anchors.centerIn: parent
                 width: parent.width - Style.spacing.panelPadding * 2
-                text: "No Running Apps"
+                text: root.allApps.length === 0
+                  ? "No Running Apps"
+                  : "No matches for “" + root.searchQuery + "”"
                 textFormat: Text.PlainText
                 horizontalAlignment: Text.AlignHCenter
                 color: root.foreground
@@ -392,7 +478,7 @@ Item {
 
         Text {
           Layout.fillWidth: true
-          text: "Esc  Close"
+          text: "↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
           color: root.foreground
