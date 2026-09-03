@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Find and stably select a Running App.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Enter, clicking a Running App row, and the visible Focus action all activate the Selected App.
 - [ ] Focus targets the most recently active App Window within the Selected App.
