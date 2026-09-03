@@ -114,6 +114,7 @@ Item {
   }
 
   function setSearchQuery(query) {
+    root.clearPendingFocus()
     var previousIndex = root.selectedIndex
     root.searchQuery = query
     root.apps = ProcDeckModel.filterRunningApps(root.allApps, query)
@@ -123,6 +124,7 @@ Item {
   }
 
   function select(delta) {
+    root.clearPendingFocus()
     if (!root.apps.length) return
     var index = root.selectedIndex
     if (index < 0) index = delta < 0 ? root.apps.length - 1 : 0
@@ -132,6 +134,7 @@ Item {
   }
 
   function selectAbsolute(index) {
+    root.clearPendingFocus()
     if (!root.apps.length) return
     index = Math.max(0, Math.min(index, root.apps.length - 1))
     root.selectedIdentity = root.apps[index].identity
@@ -187,6 +190,12 @@ Item {
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function reportFocusTimeout() {
+    root.footerError = "Unable to focus this app."
+    if (root.opened)
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
   function close() {
     root.clearPendingFocus()
     root.opened = false
@@ -214,7 +223,7 @@ Item {
     id: focusAcknowledgementTimer
     interval: 250
     repeat: false
-    onTriggered: root.reportFocusError()
+    onTriggered: root.reportFocusTimeout()
   }
 
   Connections {
