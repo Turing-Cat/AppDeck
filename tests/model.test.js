@@ -8,6 +8,7 @@ const {
   filterRunningApps,
   orderRunningApps,
   initialSelectedIdentity,
+  pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
 
@@ -186,4 +187,15 @@ test("opening selects the Previous App when it exists", () => {
     initialSelectedIdentity([app("app:only")]),
     initialSelectedIdentity([])
   ], ["app:previous", "app:recent", "app:only", ""]);
+});
+
+test("Page movement uses the visible page size and stops at result boundaries", () => {
+  assert.deepEqual([
+    pageSelectionIndex(0, 5, 6, 1),
+    pageSelectionIndex(4, 5, 6, -1),
+    pageSelectionIndex(1, 10, 4, 1),
+    pageSelectionIndex(8, 10, 4, 1),
+    pageSelectionIndex(2, 10, 4, -1),
+    pageSelectionIndex(0, 0, 4, 1)
+  ], [4, 0, 5, 9, 0, -1]);
 });

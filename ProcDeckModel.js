@@ -78,9 +78,9 @@ function filterRunningApps(apps, query) {
   });
 }
 
-function orderRunningApps(apps, previousIdentities) {
-  var previous = previousIdentities || [];
-  var source = previous.length ? previous : apps.slice().sort(function(a, b) {
+function orderRunningApps(apps, priorActivityOrder) {
+  var priorOrder = priorActivityOrder || [];
+  var activityOrderSeed = priorOrder.length ? priorOrder : apps.slice().sort(function(a, b) {
     var aRank = a.focusHistoryId === null ? Infinity : Number(a.focusHistoryId);
     var bRank = b.focusHistoryId === null ? Infinity : Number(b.focusHistoryId);
     return aRank === bRank ? apps.indexOf(a) - apps.indexOf(b) : aRank - bRank;
@@ -90,7 +90,7 @@ function orderRunningApps(apps, previousIdentities) {
   var ordered = [];
 
   apps.forEach(function(app) { byIdentity[app.identity] = app; });
-  source.concat(apps.map(function(app) { return app.identity; })).forEach(function(identity) {
+  activityOrderSeed.concat(apps.map(function(app) { return app.identity; })).forEach(function(identity) {
     if (byIdentity[identity] && !seen[identity]) {
       seen[identity] = true;
       ordered.push(byIdentity[identity]);
@@ -109,6 +109,13 @@ function orderRunningApps(apps, previousIdentities) {
 function initialSelectedIdentity(apps) {
   if (!apps.length) return "";
   return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
+}
+
+function pageSelectionIndex(currentIndex, resultCount, pageSize, direction) {
+  if (resultCount <= 0) return -1;
+  var current = Math.max(0, Math.min(resultCount - 1, currentIndex));
+  var page = Math.max(1, Math.floor(pageSize));
+  return Math.max(0, Math.min(resultCount - 1, current + (direction < 0 ? -page : page)));
 }
 
 function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
@@ -130,6 +137,7 @@ if (typeof module !== "undefined") {
     filterRunningApps: filterRunningApps,
     orderRunningApps: orderRunningApps,
     initialSelectedIdentity: initialSelectedIdentity,
+    pageSelectionIndex: pageSelectionIndex,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };
 }

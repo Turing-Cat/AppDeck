@@ -15,7 +15,7 @@ Item {
   property bool opened: false
   property var allApps: []
   property var apps: []
-  property var activityIdentities: []
+  property var activityOrderIdentities: []
   property string searchQuery: ""
   property string selectedIdentity: ""
 
@@ -83,9 +83,9 @@ Item {
     var groupedApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
       return DesktopEntries.heuristicLookup(appId)
     })
-    var nextApps = ProcDeckModel.orderRunningApps(groupedApps, root.activityIdentities)
+    var nextApps = ProcDeckModel.orderRunningApps(groupedApps, root.activityOrderIdentities)
 
-    root.activityIdentities = nextApps.map(function(app) { return app.identity })
+    root.activityOrderIdentities = nextApps.map(function(app) { return app.identity })
     root.allApps = nextApps
     root.apps = ProcDeckModel.filterRunningApps(nextApps, root.searchQuery)
     root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
@@ -131,6 +131,13 @@ Item {
     index = Math.max(0, Math.min(index, root.apps.length - 1))
     root.selectedIdentity = root.apps[index].identity
     root.revealSelected()
+  }
+
+  function selectPage(direction) {
+    var rowExtent = Style.space(64) + appList.spacing
+    var pageSize = Math.max(1, Math.floor((appList.height + appList.spacing) / rowExtent))
+    root.selectAbsolute(ProcDeckModel.pageSelectionIndex(
+      root.selectedIndex, root.apps.length, pageSize, direction))
   }
 
   function revealSelected() {
@@ -232,10 +239,10 @@ Item {
             root.select(1)
             event.accepted = true
           } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
+            root.selectPage(-1)
             event.accepted = true
           } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
+            root.selectPage(1)
             event.accepted = true
           } else if (event.key === Qt.Key_Home) {
             root.selectAbsolute(0)
