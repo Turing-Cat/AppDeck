@@ -4,8 +4,7 @@ ProcDeck is a keyboard-first running-app switcher and closer for Omarchy 4.
 It manages GUI applications as groups of windows instead of exposing a raw
 process table.
 
-Status: v0.1 design candidate completed on 2026-09-03; implementation awaits
-final shared-understanding confirmation.
+Status: v0.1 design locked on 2026-09-03; implementation is in progress.
 
 ## v0.1 scope
 
@@ -26,7 +25,7 @@ Included:
   Enter switches back immediately.
 - Focus the most recently used window in the selected application.
 - Gracefully close every window in the selected application.
-- Force-kill the selected application's window-owning processes after an
+- Force-kill the selected application's exact Hyprland window owners after an
   explicit confirmation.
 - Live updates as windows open, close, move, or change title.
 - Mouse support alongside the complete keyboard flow.

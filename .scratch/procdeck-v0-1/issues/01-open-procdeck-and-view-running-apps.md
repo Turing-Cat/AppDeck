@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The `procdeck.app` plugin is an overlay that stays loaded and exposes open, close, and toggle lifecycle operations to the shell host.
 - [ ] Opening ProcDeck derives Running Apps from the shell's live desktop window objects without a daemon, helper process, process-table scan, or background polling.
