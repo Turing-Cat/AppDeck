@@ -18,6 +18,7 @@ Item {
   property var activityOrderIdentities: []
   property string searchQuery: ""
   property string selectedIdentity: ""
+  property string footerError: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -100,6 +101,7 @@ Item {
 
   function open(payloadJson) {
     root.searchQuery = ""
+    root.footerError = ""
     root.rebuild()
     root.selectedIdentity = ProcDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
@@ -146,6 +148,26 @@ Item {
       if (root.selectedIndex >= 0)
         appList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
     })
+  }
+
+  function focusSelectedApp() {
+    root.footerError = ""
+    var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
+    var focusFailed = !target || !target.handle
+    if (!focusFailed) {
+      try {
+        target.handle.activate()
+      } catch (error) {
+        focusFailed = true
+      }
+    }
+
+    if (focusFailed) {
+      root.footerError = "Unable to focus this app."
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      return
+    }
+    root.dismiss()
   }
 
   function close() {
@@ -229,6 +251,9 @@ Item {
           if (event.key === Qt.Key_Escape) {
             if (root.searchQuery) root.setSearchQuery("")
             else root.dismiss()
+            event.accepted = true
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            root.focusSelectedApp()
             event.accepted = true
           } else if (Util.editsFilter(event, root.searchQuery)) {
             root.setSearchQuery(Util.editedFilter(event, root.searchQuery))
@@ -403,7 +428,10 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.selectAbsolute(appRow.index)
+                  onClicked: {
+                    root.selectAbsolute(appRow.index)
+                    root.focusSelectedApp()
+                  }
                 }
               }
 
@@ -480,17 +508,29 @@ Item {
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideMiddle
               }
+
+              Button {
+                Layout.fillWidth: true
+                text: "Focus"
+                bordered: true
+                enabled: root.selectedApp !== null
+                opacity: enabled ? 1 : 0.5
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.focusSelectedApp()
+              }
             }
           }
         }
 
         Text {
           Layout.fillWidth: true
-          text: "↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
+          text: root.footerError
+            || "Enter / Click  Focus  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
-          color: root.foreground
-          opacity: 0.5
+          color: root.footerError ? Color.urgent : root.foreground
+          opacity: root.footerError ? 1 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }

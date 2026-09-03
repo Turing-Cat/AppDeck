@@ -111,6 +111,28 @@ function initialSelectedIdentity(apps) {
   return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
 }
 
+function mostRecentlyActiveAppWindow(runningApp) {
+  var windows = runningApp && Array.isArray(runningApp.windows)
+    ? runningApp.windows.filter(function(window) { return window && typeof window === "object"; })
+    : [];
+  if (!windows.length) return null;
+
+  var rankedWindow = null;
+  var rankedFocusHistoryId = Infinity;
+  for (var i = 0; i < windows.length; i++) {
+    if (windows[i].activated === true) return windows[i];
+    var rawFocusHistoryId = windows[i].focusHistoryId;
+    var focusHistoryId = Number(rawFocusHistoryId);
+    if (rawFocusHistoryId !== undefined && rawFocusHistoryId !== null
+        && rawFocusHistoryId !== "" && isFinite(focusHistoryId)
+        && focusHistoryId >= 0 && focusHistoryId < rankedFocusHistoryId) {
+      rankedWindow = windows[i];
+      rankedFocusHistoryId = focusHistoryId;
+    }
+  }
+  return rankedWindow || windows[0];
+}
+
 function pageSelectionIndex(currentIndex, resultCount, pageSize, direction) {
   if (resultCount <= 0) return -1;
   var current = Math.max(0, Math.min(resultCount - 1, currentIndex));
@@ -137,6 +159,7 @@ if (typeof module !== "undefined") {
     filterRunningApps: filterRunningApps,
     orderRunningApps: orderRunningApps,
     initialSelectedIdentity: initialSelectedIdentity,
+    mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,
     pageSelectionIndex: pageSelectionIndex,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };

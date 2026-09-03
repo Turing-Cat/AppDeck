@@ -8,6 +8,7 @@ const {
   filterRunningApps,
   orderRunningApps,
   initialSelectedIdentity,
+  mostRecentlyActiveAppWindow,
   pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
@@ -187,6 +188,32 @@ test("opening selects the Previous App when it exists", () => {
     initialSelectedIdentity([app("app:only")]),
     initialSelectedIdentity([])
   ], ["app:previous", "app:recent", "app:only", ""]);
+});
+
+test("focus selects the most recently active App Window within the Selected App", () => {
+  const selectedOlder = {
+    id: "selected-older", appId: "org.selected", focusHistoryId: 7
+  };
+  const selectedRecent = {
+    id: "selected-recent", appId: "org.selected", focusHistoryId: 2
+  };
+  const globallyNewer = {
+    id: "other-newest", appId: "org.other", focusHistoryId: 0, activated: true
+  };
+  const apps = runningApps([
+    selectedOlder, globallyNewer, selectedRecent
+  ], () => null);
+  const selectedApp = apps.find(app => app.identity === "app:org.selected");
+  const activated = { id: "activated", activated: true, focusHistoryId: 9 };
+  const rankedNewer = { id: "ranked-newer", focusHistoryId: 0 };
+  const fallback = { id: "fallback" };
+
+  assert.deepEqual([
+    mostRecentlyActiveAppWindow(selectedApp),
+    mostRecentlyActiveAppWindow({ windows: [rankedNewer, activated] }),
+    mostRecentlyActiveAppWindow({ windows: [fallback, {}] }),
+    mostRecentlyActiveAppWindow({ windows: [] })
+  ], [selectedRecent, activated, fallback, null]);
 });
 
 test("Page movement uses the visible page size and stops at result boundaries", () => {
