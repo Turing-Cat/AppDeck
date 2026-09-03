@@ -28,6 +28,7 @@ Item {
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
+  readonly property int rowHeight: Style.space(64)
   readonly property bool narrow: card.width < Style.space(760)
   readonly property int selectedIndex: {
     for (var i = 0; i < apps.length; i++)
@@ -134,7 +135,7 @@ Item {
   }
 
   function selectPage(direction) {
-    var rowExtent = Style.space(64) + appList.spacing
+    var rowExtent = root.rowHeight + appList.spacing
     var pageSize = Math.max(1, Math.floor((appList.height + appList.spacing) / rowExtent))
     root.selectAbsolute(ProcDeckModel.pageSelectionIndex(
       root.selectedIndex, root.apps.length, pageSize, direction))
@@ -345,7 +346,7 @@ Item {
 
                 readonly property bool selected: index === root.selectedIndex
                 width: ListView.view.width
-                height: Style.space(64)
+                height: root.rowHeight
                 radius: root.cornerRadius
                 color: selected ? root.selectedBackground : "transparent"
                 borderSpec: selected
