@@ -206,14 +206,23 @@ test("focus selects the most recently active App Window within the Selected App"
   const selectedApp = apps.find(app => app.identity === "app:org.selected");
   const activated = { id: "activated", activated: true, focusHistoryId: 9 };
   const rankedNewer = { id: "ranked-newer", focusHistoryId: 0 };
-  const fallback = { id: "fallback" };
+  const single = { id: "single" };
 
   assert.deepEqual([
     mostRecentlyActiveAppWindow(selectedApp),
     mostRecentlyActiveAppWindow({ windows: [rankedNewer, activated] }),
-    mostRecentlyActiveAppWindow({ windows: [fallback, {}] }),
+    mostRecentlyActiveAppWindow({ windows: [single] }),
+    mostRecentlyActiveAppWindow({ windows: [
+      { id: "missing" },
+      { id: "negative", focusHistoryId: -1 },
+      { id: "invalid", focusHistoryId: "unknown" }
+    ] }),
+    mostRecentlyActiveAppWindow({ windows: [
+      { id: "tied-a", focusHistoryId: 3 },
+      { id: "tied-b", focusHistoryId: "3" }
+    ] }),
     mostRecentlyActiveAppWindow({ windows: [] })
-  ], [selectedRecent, activated, fallback, null]);
+  ], [selectedRecent, activated, single, null, null, null]);
 });
 
 test("Page movement uses the visible page size and stops at result boundaries", () => {

@@ -2,6 +2,12 @@ function normalizedAppId(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizedFocusHistoryId(value) {
+  if (value === undefined || value === null || value === "") return null;
+  var focusHistoryId = Number(value);
+  return isFinite(focusHistoryId) && focusHistoryId >= 0 ? focusHistoryId : null;
+}
+
 function ownerSnapshot(snapshots, index, seen) {
   var snapshot = snapshots[index];
   if (!snapshot.parent || seen[index]) return snapshot;
@@ -56,11 +62,10 @@ function runningApps(snapshots, desktopEntryLookup) {
       group.currentTitle = title;
 
     if (snapshots[i].activated === true) group.activated = true;
-    var focusHistoryId = snapshots[i].focusHistoryId;
-    if (focusHistoryId !== undefined && focusHistoryId !== null && focusHistoryId !== ""
-        && isFinite(Number(focusHistoryId)) && Number(focusHistoryId) >= 0
-        && (group.focusHistoryId === null || Number(focusHistoryId) < group.focusHistoryId))
-      group.focusHistoryId = Number(focusHistoryId);
+    var focusHistoryId = normalizedFocusHistoryId(snapshots[i].focusHistoryId);
+    if (focusHistoryId !== null
+        && (group.focusHistoryId === null || focusHistoryId < group.focusHistoryId))
+      group.focusHistoryId = focusHistoryId;
   }
 
   return groups;
@@ -117,20 +122,24 @@ function mostRecentlyActiveAppWindow(runningApp) {
     : [];
   if (!windows.length) return null;
 
+  for (var i = 0; i < windows.length; i++)
+    if (windows[i].activated === true) return windows[i];
+  if (windows.length === 1) return windows[0];
+
   var rankedWindow = null;
   var rankedFocusHistoryId = Infinity;
-  for (var i = 0; i < windows.length; i++) {
-    if (windows[i].activated === true) return windows[i];
-    var rawFocusHistoryId = windows[i].focusHistoryId;
-    var focusHistoryId = Number(rawFocusHistoryId);
-    if (rawFocusHistoryId !== undefined && rawFocusHistoryId !== null
-        && rawFocusHistoryId !== "" && isFinite(focusHistoryId)
-        && focusHistoryId >= 0 && focusHistoryId < rankedFocusHistoryId) {
-      rankedWindow = windows[i];
+  var rankIsTied = false;
+  for (var j = 0; j < windows.length; j++) {
+    var focusHistoryId = normalizedFocusHistoryId(windows[j].focusHistoryId);
+    if (focusHistoryId !== null && focusHistoryId < rankedFocusHistoryId) {
+      rankedWindow = windows[j];
       rankedFocusHistoryId = focusHistoryId;
+      rankIsTied = false;
+    } else if (focusHistoryId !== null && focusHistoryId === rankedFocusHistoryId) {
+      rankIsTied = true;
     }
   }
-  return rankedWindow || windows[0];
+  return rankedWindow && !rankIsTied ? rankedWindow : null;
 }
 
 function pageSelectionIndex(currentIndex, resultCount, pageSize, direction) {

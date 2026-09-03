@@ -19,6 +19,7 @@ Item {
   property string searchQuery: ""
   property string selectedIdentity: ""
   property string footerError: ""
+  property var pendingFocusHandle: null
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -100,6 +101,7 @@ Item {
   }
 
   function open(payloadJson) {
+    root.clearPendingFocus()
     root.searchQuery = ""
     root.footerError = ""
     root.rebuild()
@@ -151,30 +153,47 @@ Item {
   }
 
   function focusSelectedApp() {
+    root.clearPendingFocus()
     root.footerError = ""
     var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
-    var focusFailed = !target || !target.handle
-    if (!focusFailed) {
-      try {
-        target.handle.activate()
-      } catch (error) {
-        focusFailed = true
-      }
-    }
-
-    if (focusFailed) {
-      root.footerError = "Unable to focus this app."
-      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    if (!target || !target.handle) {
+      root.reportFocusError()
       return
     }
-    root.dismiss()
+
+    root.pendingFocusHandle = target.handle
+    focusAcknowledgementTimer.restart()
+    var activated = false
+    try {
+      target.handle.activate()
+      activated = root.pendingFocusHandle
+        && root.pendingFocusHandle.activated === true
+    } catch (error) {
+      root.reportFocusError()
+      return
+    }
+    if (activated) root.dismiss()
+  }
+
+  function clearPendingFocus() {
+    focusAcknowledgementTimer.stop()
+    root.pendingFocusHandle = null
+  }
+
+  function reportFocusError() {
+    root.clearPendingFocus()
+    root.footerError = "Unable to focus this app."
+    if (root.opened)
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
+    root.clearPendingFocus()
     root.opened = false
   }
 
   function dismiss() {
+    root.clearPendingFocus()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "procdeck.app")
@@ -191,6 +210,13 @@ Item {
     onTriggered: root.rebuild()
   }
 
+  Timer {
+    id: focusAcknowledgementTimer
+    interval: 250
+    repeat: false
+    onTriggered: root.reportFocusError()
+  }
+
   Connections {
     target: Hyprland.toplevels
     function onValuesChanged() { root.scheduleRebuild() }
@@ -198,7 +224,30 @@ Item {
 
   Connections {
     target: Hyprland
-    function onRawEvent(event) { root.scheduleRebuild() }
+    function onRawEvent(event) {
+      var name = event ? String(event.name) : ""
+      if (name === "activewindow" || name === "activewindowv2")
+        Hyprland.refreshToplevels()
+      root.scheduleRebuild()
+    }
+  }
+
+  Instantiator {
+    model: Hyprland.toplevels.values || []
+    delegate: Connections {
+      required property var modelData
+      target: modelData
+      function onLastIpcObjectChanged() { root.scheduleRebuild() }
+    }
+  }
+
+  Connections {
+    target: root.pendingFocusHandle
+    function onActivatedChanged() {
+      if (root.pendingFocusHandle
+          && root.pendingFocusHandle.activated === true)
+        root.dismiss()
+    }
   }
 
   Connections {
@@ -206,7 +255,10 @@ Item {
     function onValuesChanged() { root.scheduleRebuild() }
   }
 
-  Component.onCompleted: root.rebuild()
+  Component.onCompleted: {
+    Hyprland.refreshToplevels()
+    root.rebuild()
+  }
 
   PanelWindow {
     id: panel
@@ -529,7 +581,7 @@ Item {
             || "Enter / Click  Focus  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
-          color: root.footerError ? Color.urgent : root.foreground
+          color: root.foreground
           opacity: root.footerError ? 1 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
