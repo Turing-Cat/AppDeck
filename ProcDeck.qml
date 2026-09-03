@@ -172,6 +172,7 @@ Item {
       activated = root.pendingFocusHandle
         && root.pendingFocusHandle.activated === true
     } catch (error) {
+      root.clearPendingFocus()
       root.reportFocusError()
       return
     }
@@ -184,13 +185,6 @@ Item {
   }
 
   function reportFocusError() {
-    root.clearPendingFocus()
-    root.footerError = "Unable to focus this app."
-    if (root.opened)
-      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function reportFocusTimeout() {
     root.footerError = "Unable to focus this app."
     if (root.opened)
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -223,7 +217,7 @@ Item {
     id: focusAcknowledgementTimer
     interval: 250
     repeat: false
-    onTriggered: root.reportFocusTimeout()
+    onTriggered: root.reportFocusError()
   }
 
   Connections {
