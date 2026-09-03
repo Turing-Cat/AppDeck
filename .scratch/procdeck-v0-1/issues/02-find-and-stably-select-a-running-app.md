@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Open ProcDeck and view Running Apps.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Running Apps appear in Activity Order with the Active App first and the Previous App second.
 - [ ] Opening ProcDeck initially selects the Previous App when it exists, allowing an immediate Enter action to switch back.
