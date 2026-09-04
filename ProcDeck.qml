@@ -231,7 +231,8 @@ Item {
     root.pendingForceKillApp = {
       identity: root.selectedApp.identity,
       name: root.selectedApp.name,
-      windowCount: root.selectedApp.windows.length
+      windowCount: root.selectedApp.windows.length,
+      forceKillScope: ProcDeckModel.forceKillScope(root.selectedApp)
     }
     forceKillConfirm.selectedIndex = 1
     root.restoreListFocus()
@@ -251,13 +252,21 @@ Item {
         }
       }
     }
-    var targets = ProcDeckModel.forceKillTargets(currentApp || pendingApp, confirmed)
+    var targets = ProcDeckModel.forceKillTargets(
+      currentApp || pendingApp, confirmed, root.allApps)
     if (!confirmed) {
       root.restoreListFocus()
       return
     }
-    if (!currentApp || currentApp.windowCount !== pendingApp.windowCount) {
+    if (!currentApp || currentApp.windowCount !== pendingApp.windowCount
+        || !ProcDeckModel.forceKillScopeMatches(
+          currentApp, pendingApp.forceKillScope)) {
       root.footerMessage = "Force Kill target changed. Review it again."
+      root.restoreListFocus()
+      return
+    }
+    if (!ProcDeckModel.forceKillScopeIsExclusive(currentApp, root.allApps)) {
+      root.footerMessage = "Force Kill target is shared with another Running App."
       root.restoreListFocus()
       return
     }
@@ -373,26 +382,49 @@ Item {
       id: forceKillSocket
       required property string modelData
       property bool finished: false
+      property bool requestWritten: false
+      property string responseBuffer: ""
+      property Timer responseTimeout: Timer {
+        interval: 1500
+        running: !forceKillSocket.finished
+        repeat: false
+        onTriggered: forceKillSocket.acceptResponse("", true)
+      }
 
       path: Hyprland.requestSocketPath
       connected: !finished
 
-      function finish(response) {
+      function acceptResponse(chunk, ended) {
+        if (finished) return
+        var state = ProcDeckModel.forceKillResponseState(
+          responseBuffer, chunk, ended)
+        responseBuffer = state.response
+        if (state.done) finish(state.succeeded)
+      }
+
+      function finish(succeeded) {
         if (finished) return
         finished = true
-        root.recordForceKillResponse(String(response || "").trim() === "ok")
+        root.recordForceKillResponse(succeeded)
       }
 
       onConnectionStateChanged: {
-        if (!connected || finished) return
-        write("dispatch " + modelData)
-        flush()
+        if (finished) return
+        if (connected) {
+          requestWritten = true
+          write("dispatch " + modelData)
+          flush()
+        } else if (requestWritten) {
+          acceptResponse("", true)
+        }
       }
-      onError: function(error) { forceKillSocket.finish("") }
+      onError: function(error) { forceKillSocket.acceptResponse("", true) }
 
       parser: SplitParser {
         splitMarker: ""
-        onRead: function(response) { forceKillSocket.finish(response) }
+        onRead: function(response) {
+          forceKillSocket.acceptResponse(response, false)
+        }
       }
     }
   }

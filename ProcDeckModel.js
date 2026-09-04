@@ -122,12 +122,10 @@ function appWindows(runningApp) {
     : [];
 }
 
-function forceKillTargets(runningApp, confirmed) {
-  if (!confirmed) return [];
-
+function forceKillScope(runningApp) {
   var windows = appWindows(runningApp);
   var seenOwners = Object.create(null);
-  var targets = [];
+  var scope = [];
   for (var i = 0; i < windows.length; i++) {
     var owner = windows[i].ownerIdentity;
     var address = String(windows[i].hyprlandAddress || "");
@@ -137,9 +135,61 @@ function forceKillTargets(runningApp, confirmed) {
       continue;
 
     seenOwners[owner] = true;
-    targets.push('hl.dsp.window.kill({ window = "address:' + address + '" })');
+    scope.push({ ownerIdentity: owner, hyprlandAddress: address });
   }
-  return targets;
+  return scope.sort(function(a, b) {
+    if (a.ownerIdentity !== b.ownerIdentity) return a.ownerIdentity - b.ownerIdentity;
+    return a.hyprlandAddress < b.hyprlandAddress ? -1
+      : a.hyprlandAddress > b.hyprlandAddress ? 1 : 0;
+  });
+}
+
+function forceKillScopeMatches(runningApp, reviewedScope) {
+  if (!Array.isArray(reviewedScope)) return false;
+  var currentScope = forceKillScope(runningApp);
+  if (currentScope.length !== reviewedScope.length) return false;
+  for (var i = 0; i < currentScope.length; i++) {
+    if (currentScope[i].ownerIdentity !== reviewedScope[i].ownerIdentity
+        || currentScope[i].hyprlandAddress !== reviewedScope[i].hyprlandAddress)
+      return false;
+  }
+  return true;
+}
+
+function forceKillScopeIsExclusive(runningApp, allApps) {
+  if (!runningApp || !Array.isArray(allApps)) return false;
+  var selectedOwners = Object.create(null);
+  forceKillScope(runningApp).forEach(function(target) {
+    selectedOwners["owner:" + target.ownerIdentity] = true;
+  });
+
+  for (var i = 0; i < allApps.length; i++) {
+    var app = allApps[i];
+    if (!app || app.identity === runningApp.identity) continue;
+    var windows = appWindows(app);
+    for (var j = 0; j < windows.length; j++) {
+      if (selectedOwners["owner:" + windows[j].ownerIdentity]) return false;
+    }
+  }
+  return true;
+}
+
+function forceKillTargets(runningApp, confirmed, allApps) {
+  if (!confirmed) return [];
+  if (Array.isArray(allApps) && !forceKillScopeIsExclusive(runningApp, allApps)) return [];
+  return forceKillScope(runningApp).map(function(target) {
+    return 'hl.dsp.window.kill({ window = "address:' + target.hyprlandAddress + '" })';
+  });
+}
+
+function forceKillResponseState(response, chunk, ended) {
+  var combined = String(response || "") + String(chunk || "");
+  var succeeded = combined.trim() === "ok";
+  return {
+    response: combined,
+    done: succeeded || ended === true,
+    succeeded: succeeded
+  };
 }
 
 function mostRecentlyActiveAppWindow(runningApp) {
@@ -194,7 +244,11 @@ if (typeof module !== "undefined") {
     initialSelectedIdentity: initialSelectedIdentity,
     mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,
     gracefulCloseTargets: appWindows,
+    forceKillScope: forceKillScope,
+    forceKillScopeIsExclusive: forceKillScopeIsExclusive,
+    forceKillScopeMatches: forceKillScopeMatches,
     forceKillTargets: forceKillTargets,
+    forceKillResponseState: forceKillResponseState,
     pageSelectionIndex: pageSelectionIndex,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };

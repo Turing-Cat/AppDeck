@@ -10,7 +10,11 @@ const {
   initialSelectedIdentity,
   mostRecentlyActiveAppWindow,
   gracefulCloseTargets,
+  forceKillScope,
+  forceKillScopeIsExclusive,
+  forceKillScopeMatches,
   forceKillTargets,
+  forceKillResponseState,
   pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
@@ -269,6 +273,70 @@ test("confirmed Force Kill targets each valid Selected App owner exactly once", 
     'hl.dsp.window.kill({ window = "address:0xa1" })',
     'hl.dsp.window.kill({ window = "address:0xB3" })'
   ]);
+});
+
+test("Force Kill confirmation rejects a same-count owner or address replacement", () => {
+  const reviewedApp = {
+    windows: [
+      { ownerIdentity: 41, hyprlandAddress: "0xa1" },
+      { ownerIdentity: 82, hyprlandAddress: "0xB3" }
+    ]
+  };
+  const reviewedScope = forceKillScope(reviewedApp);
+
+  assert.deepEqual(reviewedScope, [
+    { ownerIdentity: 41, hyprlandAddress: "0xa1" },
+    { ownerIdentity: 82, hyprlandAddress: "0xB3" }
+  ]);
+  assert.equal(forceKillScopeMatches({
+    windows: reviewedApp.windows.slice().reverse()
+  }, reviewedScope), true);
+  assert.equal(forceKillScopeMatches({
+    windows: [
+      { ownerIdentity: 41, hyprlandAddress: "0xa9" },
+      { ownerIdentity: 82, hyprlandAddress: "0xB3" }
+    ]
+  }, reviewedScope), false);
+  assert.equal(forceKillScopeMatches({
+    windows: [
+      { ownerIdentity: 41, hyprlandAddress: "0xa1" },
+      { ownerIdentity: 83, hyprlandAddress: "0xB3" }
+    ]
+  }, reviewedScope), false);
+});
+
+test("Force Kill produces no requests when another Running App shares an owner", () => {
+  const selectedApp = {
+    identity: "app:selected",
+    windows: [{ ownerIdentity: 41, hyprlandAddress: "0xa1" }]
+  };
+  const separateApp = {
+    identity: "app:separate",
+    windows: [{ ownerIdentity: 82, hyprlandAddress: "0xb2" }]
+  };
+  const sharedOwnerApp = {
+    identity: "app:shared",
+    windows: [{ ownerIdentity: 41, hyprlandAddress: "0xc3" }]
+  };
+
+  assert.equal(forceKillScopeIsExclusive(selectedApp, [selectedApp, separateApp]), true);
+  assert.equal(forceKillScopeIsExclusive(selectedApp, [selectedApp, sharedOwnerApp]), false);
+  assert.deepEqual(forceKillTargets(
+    selectedApp, true, [selectedApp, sharedOwnerApp]), []);
+});
+
+test("Force Kill responses survive fragmentation and finish on disconnect or timeout", () => {
+  const firstChunk = forceKillResponseState("", "o", false);
+  const secondChunk = forceKillResponseState(firstChunk.response, "k", false);
+
+  assert.deepEqual(firstChunk, { response: "o", done: false, succeeded: false });
+  assert.deepEqual(secondChunk, { response: "ok", done: true, succeeded: true });
+  assert.deepEqual(forceKillResponseState("", "", true), {
+    response: "", done: true, succeeded: false
+  });
+  assert.deepEqual(forceKillResponseState("o", "", true), {
+    response: "o", done: true, succeeded: false
+  });
 });
 
 test("Page movement uses the visible page size and stops at result boundaries", () => {
