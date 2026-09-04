@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
@@ -21,6 +22,9 @@ Item {
   property string footerMessage: ""
   property var pendingFocusHandle: null
   property var pendingForceKillApp: null
+  property var forceKillRequests: []
+  property int forceKillResponseCount: 0
+  property int forceKillFailureCount: 0
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -215,15 +219,19 @@ Item {
   function requestForceKill() {
     root.clearPendingFocus()
     root.footerMessage = ""
+    if (root.forceKillRequests.length) {
+      root.footerMessage = "A Force Kill request is still pending."
+      return
+    }
     if (!root.selectedApp) {
       root.footerMessage = "Unable to request Force Kill."
       return
     }
 
     root.pendingForceKillApp = {
+      identity: root.selectedApp.identity,
       name: root.selectedApp.name,
-      windowCount: root.selectedApp.windows.length,
-      windows: root.selectedApp.windows.slice(0)
+      windowCount: root.selectedApp.windows.length
     }
     forceKillConfirm.selectedIndex = 1
     root.restoreListFocus()
@@ -233,30 +241,54 @@ Item {
     var pendingApp = root.pendingForceKillApp
     root.pendingForceKillApp = null
     root.footerMessage = ""
-    var targets = ProcDeckModel.forceKillTargets(pendingApp, confirmed)
+    var currentApp = null
+    if (confirmed && pendingApp) {
+      root.rebuild()
+      for (var i = 0; i < root.allApps.length; i++) {
+        if (root.allApps[i].identity === pendingApp.identity) {
+          currentApp = root.allApps[i]
+          break
+        }
+      }
+    }
+    var targets = ProcDeckModel.forceKillTargets(currentApp || pendingApp, confirmed)
     if (!confirmed) {
       root.restoreListFocus()
       return
     }
-    var failures = 0
-
-    for (var i = 0; i < targets.length; i++) {
-      try {
-        Hyprland.dispatch("killwindow " + targets[i])
-      } catch (error) {
-        failures++
-      }
+    if (!currentApp || currentApp.windowCount !== pendingApp.windowCount) {
+      root.footerMessage = "Force Kill target changed. Review it again."
+      root.restoreListFocus()
+      return
     }
-
     if (!targets.length)
       root.footerMessage = "No valid Force Kill targets."
-    else if (failures === targets.length)
+    else if (!Hyprland.requestSocketPath)
+      root.footerMessage = "Unable to send Force Kill request."
+    else {
+      root.forceKillResponseCount = 0
+      root.forceKillFailureCount = 0
+      root.forceKillRequests = targets
+    }
+    root.restoreListFocus()
+  }
+
+  function recordForceKillResponse(succeeded) {
+    if (!root.forceKillRequests.length) return
+    root.forceKillResponseCount++
+    if (!succeeded) root.forceKillFailureCount++
+    if (root.forceKillResponseCount < root.forceKillRequests.length) return
+
+    var requestCount = root.forceKillRequests.length
+    var failures = root.forceKillFailureCount
+    root.forceKillRequests = []
+    if (failures === requestCount)
       root.footerMessage = "Unable to send Force Kill request."
     else if (failures)
       root.footerMessage = "Some Force Kill requests could not be sent."
     else
-      root.footerMessage = "Force Kill requested for " + targets.length
-        + (targets.length === 1 ? " owner." : " owners.")
+      root.footerMessage = "Force Kill requested for " + requestCount
+        + (requestCount === 1 ? " owner." : " owners.")
     root.restoreListFocus()
   }
 
@@ -332,6 +364,36 @@ Item {
       required property var modelData
       target: modelData
       function onLastIpcObjectChanged() { root.scheduleRebuild() }
+    }
+  }
+
+  Instantiator {
+    model: root.forceKillRequests
+    delegate: Socket {
+      id: forceKillSocket
+      required property string modelData
+      property bool finished: false
+
+      path: Hyprland.requestSocketPath
+      connected: !finished
+
+      function finish(response) {
+        if (finished) return
+        finished = true
+        root.recordForceKillResponse(String(response || "").trim() === "ok")
+      }
+
+      onConnectionStateChanged: {
+        if (!connected || finished) return
+        write("dispatch " + modelData)
+        flush()
+      }
+      onError: function(error) { forceKillSocket.finish("") }
+
+      parser: SplitParser {
+        splitMarker: ""
+        onRead: function(response) { forceKillSocket.finish(response) }
+      }
     }
   }
 
@@ -718,7 +780,7 @@ Item {
                 Layout.fillWidth: true
                 text: "Force Kill"
                 bordered: true
-                enabled: root.selectedApp !== null
+                enabled: root.selectedApp !== null && !root.forceKillRequests.length
                 opacity: enabled ? 1 : 0.5
                 foreground: Color.urgent
                 fontFamily: root.fontFamily
