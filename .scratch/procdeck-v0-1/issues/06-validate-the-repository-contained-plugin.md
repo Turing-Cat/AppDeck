@@ -4,7 +4,7 @@
 
 **Blocked by:** 03: Focus the Selected App; 04: Gracefully Close the Selected App; 05: Force Kill the Selected App after confirmation.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The repository contains only the required plugin manifest, shell entry component, pure dependency-free model, one Node self-check, product documentation, license, and existing design records.
 - [ ] No package manager, build step, daemon, helper executable, install hook, settings subsystem, resource metrics, independent theme palette, marketplace files, or speculative component hierarchy is introduced.
