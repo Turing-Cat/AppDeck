@@ -18,8 +18,7 @@ Item {
   property var activityOrderIdentities: []
   property string searchQuery: ""
   property string selectedIdentity: ""
-  property string footerError: ""
-  property string footerStatus: ""
+  property string footerMessage: ""
   property var pendingFocusHandle: null
 
   property color background: Color.menu.background
@@ -104,8 +103,7 @@ Item {
   function open(payloadJson) {
     root.clearPendingFocus()
     root.searchQuery = ""
-    root.footerError = ""
-    root.footerStatus = ""
+    root.footerMessage = ""
     root.rebuild()
     root.selectedIdentity = ProcDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
@@ -159,8 +157,7 @@ Item {
 
   function focusSelectedApp() {
     root.clearPendingFocus()
-    root.footerError = ""
-    root.footerStatus = ""
+    root.footerMessage = ""
     var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
     if (!target || !target.handle) {
       root.reportFocusError()
@@ -184,8 +181,7 @@ Item {
 
   function requestGracefulClose() {
     root.clearPendingFocus()
-    root.footerError = ""
-    root.footerStatus = ""
+    root.footerMessage = ""
     var targets = ProcDeckModel.gracefulCloseTargets(root.selectedApp)
     var failures = 0
 
@@ -203,11 +199,11 @@ Item {
     }
 
     if (!targets.length || failures === targets.length)
-      root.footerError = "Unable to send Close Request."
+      root.footerMessage = "Unable to send Close Request."
     else if (failures)
-      root.footerError = "Some Close Requests could not be sent."
+      root.footerMessage = "Some Close Requests could not be sent."
     else
-      root.footerStatus = "Close Request sent to " + targets.length
+      root.footerMessage = "Close Request sent to " + targets.length
         + (targets.length === 1 ? " window." : " windows.")
   }
 
@@ -217,7 +213,7 @@ Item {
   }
 
   function reportFocusError() {
-    root.footerError = "Unable to focus this app."
+    root.footerMessage = "Unable to focus this app."
     if (root.opened)
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -627,13 +623,12 @@ Item {
 
         Text {
           Layout.fillWidth: true
-          text: root.footerError
-            || root.footerStatus
+          text: root.footerMessage
             || "Enter / Click  Focus  ·  Delete  Close Request  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
           color: root.foreground
-          opacity: root.footerError || root.footerStatus ? 1 : 0.5
+          opacity: root.footerMessage ? 1 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
