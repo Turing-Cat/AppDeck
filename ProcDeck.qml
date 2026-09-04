@@ -20,6 +20,7 @@ Item {
   property string selectedIdentity: ""
   property string footerMessage: ""
   property var pendingFocusHandle: null
+  property var pendingForceKillApp: null
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -61,14 +62,17 @@ Item {
       var hyprlandToplevel = values[i]
       var waylandToplevel = hyprlandToplevel.wayland
       var ipc = hyprlandToplevel.lastIpcObject || {}
+      var address = String(hyprlandToplevel.address || "")
       var workspace = hyprlandToplevel.workspace
       var workspaceId = workspace ? workspace.id : ""
       var workspaceName = workspace ? String(workspace.name || "").trim() : ""
 
       out.push({
-        id: String(hyprlandToplevel.address || i),
+        id: address || String(i),
         handle: waylandToplevel,
         parent: waylandToplevel ? waylandToplevel.parent : null,
+        ownerIdentity: ipc.pid,
+        hyprlandAddress: address,
         appId: String((waylandToplevel && waylandToplevel.appId) || ""),
         title: String((waylandToplevel && waylandToplevel.title) || hyprlandToplevel.title || ipc.title || ""),
         workspace: workspaceName || (workspaceId ? String(workspaceId) : ""),
@@ -102,6 +106,7 @@ Item {
 
   function open(payloadJson) {
     root.clearPendingFocus()
+    root.clearForceKillConfirmation()
     root.searchQuery = ""
     root.footerMessage = ""
     root.rebuild()
@@ -207,24 +212,82 @@ Item {
         + (targets.length === 1 ? " window." : " windows.")
   }
 
+  function requestForceKill() {
+    root.clearPendingFocus()
+    root.footerMessage = ""
+    if (!root.selectedApp) {
+      root.footerMessage = "Unable to request Force Kill."
+      return
+    }
+
+    root.pendingForceKillApp = {
+      name: root.selectedApp.name,
+      windowCount: root.selectedApp.windows.length,
+      windows: root.selectedApp.windows.slice(0)
+    }
+    forceKillConfirm.selectedIndex = 1
+    root.restoreListFocus()
+  }
+
+  function completeForceKill(confirmed) {
+    var pendingApp = root.pendingForceKillApp
+    root.pendingForceKillApp = null
+    root.footerMessage = ""
+    var targets = ProcDeckModel.forceKillTargets(pendingApp, confirmed)
+    if (!confirmed) {
+      root.restoreListFocus()
+      return
+    }
+    var failures = 0
+
+    for (var i = 0; i < targets.length; i++) {
+      try {
+        Hyprland.dispatch("killwindow " + targets[i])
+      } catch (error) {
+        failures++
+      }
+    }
+
+    if (!targets.length)
+      root.footerMessage = "No valid Force Kill targets."
+    else if (failures === targets.length)
+      root.footerMessage = "Unable to send Force Kill request."
+    else if (failures)
+      root.footerMessage = "Some Force Kill requests could not be sent."
+    else
+      root.footerMessage = "Force Kill requested for " + targets.length
+        + (targets.length === 1 ? " owner." : " owners.")
+    root.restoreListFocus()
+  }
+
   function clearPendingFocus() {
     focusAcknowledgementTimer.stop()
     root.pendingFocusHandle = null
   }
 
-  function reportFocusError() {
-    root.footerMessage = "Unable to focus this app."
+  function clearForceKillConfirmation() {
+    root.pendingForceKillApp = null
+  }
+
+  function restoreListFocus() {
     if (root.opened)
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function reportFocusError() {
+    root.footerMessage = "Unable to focus this app."
+    root.restoreListFocus()
+  }
+
   function close() {
     root.clearPendingFocus()
+    root.clearForceKillConfirmation()
     root.opened = false
   }
 
   function dismiss() {
     root.clearPendingFocus()
+    root.clearForceKillConfirmation()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "procdeck.app")
@@ -327,10 +390,16 @@ Item {
       Item {
         id: keyCatcher
         anchors.fill: parent
+        z: root.pendingForceKillApp ? 20 : 0
         focus: root.opened
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (root.pendingForceKillApp) {
+            if (forceKillConfirm.handleKey(event)) event.accepted = true
+            return
+          }
+
           if (event.key === Qt.Key_Escape) {
             if (root.searchQuery) root.setSearchQuery("")
             else root.dismiss()
@@ -339,7 +408,9 @@ Item {
             root.focusSelectedApp()
             event.accepted = true
           } else if (event.key === Qt.Key_Delete) {
-            if (event.modifiers === Qt.NoModifier)
+            if (event.modifiers & Qt.ShiftModifier)
+              root.requestForceKill()
+            else if (event.modifiers === Qt.NoModifier)
               root.requestGracefulClose()
             event.accepted = true
           } else if (Util.editsFilter(event, root.searchQuery)) {
@@ -371,6 +442,31 @@ Item {
             root.setSearchQuery(root.searchQuery + event.text)
             event.accepted = true
           }
+        }
+
+        ConfirmDialog {
+          id: forceKillConfirm
+
+          anchors.fill: parent
+          opened: root.pendingForceKillApp !== null
+          z: 10
+          message: root.pendingForceKillApp
+            ? "Force Kill “" + root.pendingForceKillApp.name + "” and its "
+              + root.pendingForceKillApp.windowCount
+              + (root.pendingForceKillApp.windowCount === 1
+                ? " App Window?" : " App Windows?")
+              + " Unsaved work may be lost."
+            : ""
+          confirmText: "Force Kill"
+          background: root.background
+          foreground: root.foreground
+          scrim: root.scrim
+          selectedBackground: root.selectedBackground
+          selectedText: root.selectedText
+          fontFamily: root.fontFamily
+          cornerRadius: root.cornerRadius
+          onCanceled: root.completeForceKill(false)
+          onConfirmed: root.completeForceKill(true)
         }
       }
 
@@ -617,6 +713,17 @@ Item {
                 fontFamily: root.fontFamily
                 onClicked: root.requestGracefulClose()
               }
+
+              Button {
+                Layout.fillWidth: true
+                text: "Force Kill"
+                bordered: true
+                enabled: root.selectedApp !== null
+                opacity: enabled ? 1 : 0.5
+                foreground: Color.urgent
+                fontFamily: root.fontFamily
+                onClicked: root.requestForceKill()
+              }
             }
           }
         }
@@ -624,7 +731,7 @@ Item {
         Text {
           Layout.fillWidth: true
           text: root.footerMessage
-            || "Enter / Click  Focus  ·  Delete  Close Request  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
+            || "Enter / Click  Focus  ·  Delete  Close Request  ·  Shift+Delete  Force Kill  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
           color: root.foreground

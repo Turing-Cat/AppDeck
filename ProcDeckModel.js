@@ -122,6 +122,27 @@ function appWindows(runningApp) {
     : [];
 }
 
+function forceKillTargets(runningApp, confirmed) {
+  if (!confirmed) return [];
+
+  var windows = appWindows(runningApp);
+  var seenOwners = Object.create(null);
+  var targets = [];
+  for (var i = 0; i < windows.length; i++) {
+    var rawOwner = windows[i].ownerIdentity;
+    var owner = Number(rawOwner);
+    var address = String(windows[i].hyprlandAddress || "");
+    if (rawOwner === undefined || rawOwner === null || rawOwner === ""
+        || !isFinite(owner) || owner <= 0 || Math.floor(owner) !== owner
+        || !/^0x[0-9a-f]+$/i.test(address) || seenOwners[owner])
+      continue;
+
+    seenOwners[owner] = true;
+    targets.push("address:" + address);
+  }
+  return targets;
+}
+
 function mostRecentlyActiveAppWindow(runningApp) {
   var windows = appWindows(runningApp);
   if (!windows.length) return null;
@@ -174,6 +195,7 @@ if (typeof module !== "undefined") {
     initialSelectedIdentity: initialSelectedIdentity,
     mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,
     gracefulCloseTargets: appWindows,
+    forceKillTargets: forceKillTargets,
     pageSelectionIndex: pageSelectionIndex,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };

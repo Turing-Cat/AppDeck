@@ -10,6 +10,7 @@ const {
   initialSelectedIdentity,
   mostRecentlyActiveAppWindow,
   gracefulCloseTargets,
+  forceKillTargets,
   pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
@@ -234,6 +235,35 @@ test("Graceful Close targets every App Window in the Selected App and no others"
   const selectedApp = apps.find(app => app.identity === "app:org.selected");
 
   assert.deepEqual(gracefulCloseTargets(selectedApp), [selectedFirst, selectedSecond]);
+});
+
+test("Force Kill produces no targets without confirmation", () => {
+  const selectedApp = {
+    windows: [{ ownerIdentity: 41, hyprlandAddress: "0xabc" }]
+  };
+
+  assert.deepEqual(forceKillTargets(selectedApp, false), []);
+});
+
+test("confirmed Force Kill targets each valid Selected App owner exactly once", () => {
+  const selectedWindows = [
+    { id: "selected-first", appId: "org.selected", ownerIdentity: 41, hyprlandAddress: "0xa1" },
+    { id: "selected-duplicate", appId: "org.selected", ownerIdentity: "41", hyprlandAddress: "0xa2" },
+    { id: "selected-second", appId: "org.selected", ownerIdentity: 82, hyprlandAddress: "0xB3" },
+    { id: "missing-owner", appId: "org.selected", hyprlandAddress: "0xc4" },
+    { id: "zero-owner", appId: "org.selected", ownerIdentity: 0, hyprlandAddress: "0xd5" },
+    { id: "negative-owner", appId: "org.selected", ownerIdentity: -3, hyprlandAddress: "0xe6" },
+    { id: "fractional-owner", appId: "org.selected", ownerIdentity: 4.5, hyprlandAddress: "0xf7" },
+    { id: "non-numeric-owner", appId: "org.selected", ownerIdentity: "unknown", hyprlandAddress: "0x18" },
+    { id: "invalid-address", appId: "org.selected", ownerIdentity: 99, hyprlandAddress: "title:.*" }
+  ];
+  const outside = {
+    id: "outside", appId: "org.other", ownerIdentity: 123, hyprlandAddress: "0x999"
+  };
+  const apps = runningApps([selectedWindows[0], outside].concat(selectedWindows.slice(1)), () => null);
+  const selectedApp = apps.find(app => app.identity === "app:org.selected");
+
+  assert.deepEqual(forceKillTargets(selectedApp, true), ["address:0xa1", "address:0xB3"]);
 });
 
 test("Page movement uses the visible page size and stops at result boundaries", () => {
