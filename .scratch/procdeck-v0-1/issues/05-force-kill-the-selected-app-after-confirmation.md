@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Find and stably select a Running App.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Shift+Delete and the urgent Force Kill action open a confirmation naming the Selected App and its App Window count.
 - [ ] Enter confirms from the dialog; Escape cancels and returns keyboard focus to the Running App list.
