@@ -9,6 +9,7 @@ const {
   orderRunningApps,
   initialSelectedIdentity,
   mostRecentlyActiveAppWindow,
+  gracefulCloseTargets,
   pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
@@ -223,6 +224,16 @@ test("focus selects the most recently active App Window within the Selected App"
     ] }),
     mostRecentlyActiveAppWindow({ windows: [] })
   ], [selectedRecent, activated, single, null, null, null]);
+});
+
+test("Graceful Close targets every App Window in the Selected App and no others", () => {
+  const selectedFirst = { id: "selected-first", appId: "org.selected" };
+  const outside = { id: "outside", appId: "org.other" };
+  const selectedSecond = { id: "selected-second", appId: "org.selected" };
+  const apps = runningApps([selectedFirst, outside, selectedSecond], () => null);
+  const selectedApp = apps.find(app => app.identity === "app:org.selected");
+
+  assert.deepEqual(gracefulCloseTargets(selectedApp), [selectedFirst, selectedSecond]);
 });
 
 test("Page movement uses the visible page size and stops at result boundaries", () => {

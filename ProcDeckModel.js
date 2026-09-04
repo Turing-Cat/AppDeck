@@ -116,10 +116,14 @@ function initialSelectedIdentity(apps) {
   return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
 }
 
-function mostRecentlyActiveAppWindow(runningApp) {
-  var windows = runningApp && Array.isArray(runningApp.windows)
+function appWindows(runningApp) {
+  return runningApp && Array.isArray(runningApp.windows)
     ? runningApp.windows.filter(function(window) { return window && typeof window === "object"; })
     : [];
+}
+
+function mostRecentlyActiveAppWindow(runningApp) {
+  var windows = appWindows(runningApp);
   if (!windows.length) return null;
 
   for (var i = 0; i < windows.length; i++)
@@ -169,6 +173,7 @@ if (typeof module !== "undefined") {
     orderRunningApps: orderRunningApps,
     initialSelectedIdentity: initialSelectedIdentity,
     mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,
+    gracefulCloseTargets: appWindows,
     pageSelectionIndex: pageSelectionIndex,
     reconcileSelectedIdentity: reconcileSelectedIdentity
   };

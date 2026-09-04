@@ -19,6 +19,7 @@ Item {
   property string searchQuery: ""
   property string selectedIdentity: ""
   property string footerError: ""
+  property string footerStatus: ""
   property var pendingFocusHandle: null
 
   property color background: Color.menu.background
@@ -104,6 +105,7 @@ Item {
     root.clearPendingFocus()
     root.searchQuery = ""
     root.footerError = ""
+    root.footerStatus = ""
     root.rebuild()
     root.selectedIdentity = ProcDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
@@ -158,6 +160,7 @@ Item {
   function focusSelectedApp() {
     root.clearPendingFocus()
     root.footerError = ""
+    root.footerStatus = ""
     var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
     if (!target || !target.handle) {
       root.reportFocusError()
@@ -177,6 +180,35 @@ Item {
       return
     }
     if (activated) root.dismiss()
+  }
+
+  function requestGracefulClose() {
+    root.clearPendingFocus()
+    root.footerError = ""
+    root.footerStatus = ""
+    var targets = ProcDeckModel.gracefulCloseTargets(root.selectedApp)
+    var failures = 0
+
+    for (var i = 0; i < targets.length; i++) {
+      var handle = targets[i].handle
+      if (!handle || typeof handle.close !== "function") {
+        failures++
+        continue
+      }
+      try {
+        handle.close()
+      } catch (error) {
+        failures++
+      }
+    }
+
+    if (!targets.length || failures === targets.length)
+      root.footerError = "Unable to send Close Request."
+    else if (failures)
+      root.footerError = "Some Close Requests could not be sent."
+    else
+      root.footerStatus = "Close Request sent to " + targets.length
+        + (targets.length === 1 ? " window." : " windows.")
   }
 
   function clearPendingFocus() {
@@ -309,6 +341,10 @@ Item {
             event.accepted = true
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             root.focusSelectedApp()
+            event.accepted = true
+          } else if (event.key === Qt.Key_Delete) {
+            if (event.modifiers === Qt.NoModifier)
+              root.requestGracefulClose()
             event.accepted = true
           } else if (Util.editsFilter(event, root.searchQuery)) {
             root.setSearchQuery(Util.editedFilter(event, root.searchQuery))
@@ -574,6 +610,17 @@ Item {
                 fontFamily: root.fontFamily
                 onClicked: root.focusSelectedApp()
               }
+
+              Button {
+                Layout.fillWidth: true
+                text: "Close"
+                bordered: true
+                enabled: root.selectedApp !== null
+                opacity: enabled ? 1 : 0.5
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.requestGracefulClose()
+              }
             }
           }
         }
@@ -581,11 +628,12 @@ Item {
         Text {
           Layout.fillWidth: true
           text: root.footerError
-            || "Enter / Click  Focus  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
+            || root.footerStatus
+            || "Enter / Click  Focus  ·  Delete  Close Request  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
           color: root.foreground
-          opacity: root.footerError ? 1 : 0.5
+          opacity: root.footerError || root.footerStatus ? 1 : 0.5
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
