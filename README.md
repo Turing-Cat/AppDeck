@@ -4,7 +4,7 @@ ProcDeck is a keyboard-first running-app switcher and closer for Omarchy 4.
 It manages GUI applications as groups of windows instead of exposing a raw
 process table.
 
-Status: v0.1 design locked on 2026-09-03; implementation is in progress.
+Status: ProcDeck v0.1 is implemented and repository-verified as of 2026-09-04.
 
 ## v0.1 scope
 
@@ -193,6 +193,17 @@ omarchy-shell shell toggle procdeck.app
 Enable it once with `omarchy plugin enable procdeck.app`. These user-config
 changes are performed only after separate approval.
 
+## Repository verification
+
+The repository-contained v0.1 passes its dependency-free Node self-check,
+Omarchy 4.0.2 plugin validation, QML formatting/parsing, and `qmllint` against
+the installed Quickshell 0.3.1 and Hyprland 0.56.2 APIs.
+
+This verification did not create a development symlink, enable or rescan the
+plugin, toggle the shell, modify user configuration, or run the live desktop
+smoke matrix. Those user-environment changes and checks require separate
+approval.
+
 ## v0.1 acceptance checks
 
 - Ten windows with four app IDs render as four application rows.
@@ -209,9 +220,9 @@ changes are performed only after separate approval.
 - Empty and no-match states are distinct.
 - `omarchy plugin validate .` passes on the supported Omarchy release.
 - The QML entry point loads without warnings.
-- Manual smoke checks cover a multi-window browser, an Electron app, a native
-  app, an unidentified window, a save dialog, multiple workspaces, and multiple
-  monitors.
+- A separately approved manual smoke matrix remains for a multi-window browser,
+  an Electron app, a native app, an unidentified window, a save dialog,
+  multiple workspaces, and multiple monitors.
 
 ## Reference baseline
 
