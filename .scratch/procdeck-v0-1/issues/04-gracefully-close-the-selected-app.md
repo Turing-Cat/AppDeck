@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Find and stably select a Running App.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Delete and the visible Close action send a Graceful Close request to every App Window in the Selected App.
 - [ ] Graceful Close does not require confirmation and uses each App Window's native close capability instead of a shell command.
