@@ -13,7 +13,7 @@ focus or close it.
 
 Included:
 
-- A fullscreen Omarchy shell overlay summoned with `SUPER + ALT + ESCAPE`.
+- A fullscreen Omarchy shell overlay summoned with `ALT + SPACE`.
 - One row per application, grouping windows by normalized Wayland `appId` and
   assigning an explicit child dialog to its parent's application.
 - Application name and icon resolved from the matching desktop entry, with
@@ -25,7 +25,7 @@ Included:
   Enter switches back immediately.
 - Focus the most recently used window in the selected application.
 - Gracefully close every window in the selected application.
-- Force-kill the selected application's exact Hyprland window owners after an
+- Kill the selected application's exact Hyprland window owners after an
   explicit confirmation.
 - Live updates as windows open, close, move, or change title.
 - Mouse support alongside the complete keyboard flow.
@@ -53,10 +53,10 @@ metrics only after a measured need and a documented grouping policy.
 | `Home` / `End` | Jump to first / last result |
 | `Enter` or row click | Focus the selected app and close ProcDeck |
 | `Delete` | Gracefully close all windows in the selected app |
-| `Shift + Delete` | Open the force-kill confirmation |
+| `Shift + Delete` | Open the Kill confirmation |
 | `Escape` | Clear a non-empty search; otherwise close ProcDeck |
 
-The force-kill confirmation names the application and window count. `Enter`
+The Kill confirmation names the application and window count. `Enter`
 confirms; `Escape` cancels and returns focus to the list. A failed action must
 leave the overlay usable and show a short inline footer error. ProcDeck never
 requests elevated privileges.
@@ -76,13 +76,15 @@ The overlay reuses Omarchy's shared `Color`, `Style`, `BorderSurface`, and
 1. A search/header row: `Running Apps` plus the current app/window totals.
 2. A single application list. Each row shows icon, name, window count, and
    workspace labels.
-3. A compact detail/action area for the selected application: current window
-   title, `appId`, Focus, Close, and Force Kill.
+3. A compact bottom detail/action area for the selected application: icon,
+   identity, window scope, current title, Focus, Close, and Kill.
 4. A footer with the keyboard hints.
 
-At narrow widths, the detail area moves below the list. The selected row uses
-the shell's existing selected-state colours; force kill alone uses the urgent
-colour. ProcDeck owns no theme palette.
+The application list fills the available body height and the detail area grows
+only to fit its content. Focus is the primary action; Close and Kill state that
+they apply to every app window. At narrow widths, the action group wraps below
+that scope label. The selected row uses the shell's existing selected-state
+colours; Kill alone uses the urgent colour. ProcDeck owns no theme palette.
 
 ## Data and action model
 
@@ -90,6 +92,7 @@ ProcDeck uses the native objects already maintained by the long-running shell:
 
 ```text
 Hyprland.toplevels
+  -> keep live, uniquely addressed Wayland windows
   -> normalize and group by Wayland appId
   -> enrich with DesktopEntries.heuristicLookup(appId)
   -> filter and sort in a pure JavaScript model
@@ -98,9 +101,10 @@ Hyprland.toplevels
 
 Normal actions do not spawn shell commands:
 
-- Focus calls `Toplevel.activate()` on the group's most recently active window.
+- Focus first releases the overlay's exclusive keyboard focus, then asks
+  Hyprland to focus the group's most recently active window by exact address.
 - Close calls `Toplevel.close()` on each window in the group.
-- Force Kill asks Hyprland to kill the exact window owners belonging to the
+- Kill asks Hyprland to immediately end the exact window owners belonging to the
   selected app. It does not infer a process tree or use name-based `pkill`.
 
 If `appId` is empty and the window has no identified parent, ProcDeck keeps that
@@ -150,7 +154,7 @@ The intended manifest is:
   "id": "procdeck.app",
   "name": "ProcDeck",
   "version": "0.1.0",
-  "description": "Focus, close, or force-kill running GUI applications",
+  "description": "Focus, close, or kill running GUI applications",
   "kinds": ["overlay"],
   "keepLoaded": true,
   "entryPoints": { "overlay": "ProcDeck.qml" }
@@ -161,7 +165,7 @@ The user-owned shortcut is deliberately separate from plugin installation:
 
 ```lua
 o.bind(
-  "SUPER + ALT + ESCAPE",
+  "ALT + SPACE",
   "ProcDeck",
   "omarchy-shell shell toggle procdeck.app"
 )
@@ -213,7 +217,7 @@ approval.
   polling.
 - Focus closes the overlay and activates the expected window.
 - Close sends a graceful close request to every window in only that app group.
-- Force kill cannot run without confirmation and targets each unique positive
+- Kill cannot run without confirmation and targets each unique positive
   window owner only through its exact Hyprland window identity.
 - Empty `appId` windows remain separate.
 - Selection remains valid when filtering or when a selected window disappears.

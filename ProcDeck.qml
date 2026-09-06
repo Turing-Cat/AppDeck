@@ -36,7 +36,7 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int rowHeight: Style.space(64)
-  readonly property bool narrow: card.width < Style.space(760)
+  readonly property bool compactActions: card.width < Style.space(640)
   readonly property int selectedIndex: {
     for (var i = 0; i < apps.length; i++)
       if (apps[i].identity === selectedIdentity) return i
@@ -61,12 +61,17 @@ Item {
   function snapshots() {
     var values = Hyprland.toplevels.values || []
     var out = []
+    var seenAddresses = ({})
 
     for (var i = 0; i < values.length; i++) {
       var hyprlandToplevel = values[i]
       var waylandToplevel = hyprlandToplevel.wayland
+      var address = ProcDeckModel.normalizedHyprlandAddress(
+        hyprlandToplevel.address)
+      if (!waylandToplevel || !address || seenAddresses[address]) continue
+      seenAddresses[address] = true
+
       var ipc = hyprlandToplevel.lastIpcObject || {}
-      var address = String(hyprlandToplevel.address || "")
       var workspace = hyprlandToplevel.workspace
       var workspaceId = workspace ? workspace.id : ""
       var workspaceName = workspace ? String(workspace.name || "").trim() : ""
@@ -168,24 +173,26 @@ Item {
     root.clearPendingFocus()
     root.footerMessage = ""
     var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
-    if (!target || !target.handle) {
+    var command = ProcDeckModel.focusCommand(target)
+    if (!target || !target.handle || !command) {
       root.reportFocusError()
       return
     }
 
     root.pendingFocusHandle = target.handle
-    focusAcknowledgementTimer.restart()
-    var activated = false
-    try {
-      target.handle.activate()
-      activated = root.pendingFocusHandle
-        && root.pendingFocusHandle.activated === true
-    } catch (error) {
-      root.clearPendingFocus()
-      root.reportFocusError()
-      return
-    }
-    if (activated) root.dismiss()
+    root.opened = false
+    Qt.callLater(function() {
+      if (!root.pendingFocusHandle) return
+      focusAcknowledgementTimer.restart()
+      try {
+        Hyprland.dispatch(command)
+        if (root.pendingFocusHandle
+            && root.pendingFocusHandle.activated === true)
+          root.dismiss()
+      } catch (error) {
+        root.reportFocusError()
+      }
+    })
   }
 
   function requestGracefulClose() {
@@ -220,11 +227,11 @@ Item {
     root.clearPendingFocus()
     root.footerMessage = ""
     if (root.forceKillRequests.length) {
-      root.footerMessage = "A Force Kill request is still pending."
+      root.footerMessage = "A Kill request is still pending."
       return
     }
     if (!root.selectedApp) {
-      root.footerMessage = "Unable to request Force Kill."
+      root.footerMessage = "Unable to request Kill."
       return
     }
 
@@ -261,19 +268,19 @@ Item {
     if (!currentApp || currentApp.windowCount !== pendingApp.windowCount
         || !ProcDeckModel.forceKillScopeMatches(
           currentApp, pendingApp.forceKillScope)) {
-      root.footerMessage = "Force Kill target changed. Review it again."
+      root.footerMessage = "Kill target changed. Review it again."
       root.restoreListFocus()
       return
     }
     if (!ProcDeckModel.forceKillScopeIsExclusive(currentApp, root.allApps)) {
-      root.footerMessage = "Force Kill target is shared with another Running App."
+      root.footerMessage = "Kill target is shared with another Running App."
       root.restoreListFocus()
       return
     }
     if (!targets.length)
-      root.footerMessage = "No valid Force Kill targets."
+      root.footerMessage = "No valid Kill targets."
     else if (!Hyprland.requestSocketPath)
-      root.footerMessage = "Unable to send Force Kill request."
+      root.footerMessage = "Unable to send Kill request."
     else {
       root.forceKillResponseCount = 0
       root.forceKillFailureCount = 0
@@ -292,11 +299,11 @@ Item {
     var failures = root.forceKillFailureCount
     root.forceKillRequests = []
     if (failures === requestCount)
-      root.footerMessage = "Unable to send Force Kill request."
+      root.footerMessage = "Unable to send Kill request."
     else if (failures)
-      root.footerMessage = "Some Force Kill requests could not be sent."
+      root.footerMessage = "Some Kill requests could not be sent."
     else
-      root.footerMessage = "Force Kill requested for " + requestCount
+      root.footerMessage = "Kill requested for " + requestCount
         + (requestCount === 1 ? " owner." : " owners.")
     root.restoreListFocus()
   }
@@ -316,6 +323,8 @@ Item {
   }
 
   function reportFocusError() {
+    root.clearPendingFocus()
+    root.opened = true
     root.footerMessage = "Unable to focus this app."
     root.restoreListFocus()
   }
@@ -373,6 +382,7 @@ Item {
       required property var modelData
       target: modelData
       function onLastIpcObjectChanged() { root.scheduleRebuild() }
+      function onWaylandHandleChanged() { root.scheduleRebuild() }
     }
   }
 
@@ -545,13 +555,13 @@ Item {
           opened: root.pendingForceKillApp !== null
           z: 10
           message: root.pendingForceKillApp
-            ? "Force Kill “" + root.pendingForceKillApp.name + "” and its "
+            ? "Kill “" + root.pendingForceKillApp.name + "” and its "
               + root.pendingForceKillApp.windowCount
               + (root.pendingForceKillApp.windowCount === 1
                 ? " App Window?" : " App Windows?")
               + " Unsaved work may be lost."
             : ""
-          confirmText: "Force Kill"
+          confirmText: "Kill"
           background: root.background
           foreground: root.foreground
           scrim: root.scrim
@@ -619,20 +629,15 @@ Item {
           color: Util.alpha(root.foreground, 0.16)
         }
 
-        GridLayout {
-          id: contentGrid
+        ColumnLayout {
+          id: contentLayout
           Layout.fillWidth: true
           Layout.fillHeight: true
-          columns: root.narrow ? 1 : 2
-          rows: root.narrow ? 2 : 1
-          columnSpacing: Style.spacing.panelGap
-          rowSpacing: Style.spacing.panelGap
+          spacing: Style.spacing.panelGap
 
           Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredWidth: root.narrow ? contentGrid.width : contentGrid.width * 0.62
-            Layout.preferredHeight: root.narrow ? contentGrid.height * 0.66 : contentGrid.height
 
             ListView {
               id: appList
@@ -730,16 +735,18 @@ Item {
           }
 
           BorderSurface {
+            id: detailCard
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.preferredWidth: root.narrow ? contentGrid.width : contentGrid.width * 0.38
-            Layout.preferredHeight: root.narrow ? contentGrid.height * 0.34 : contentGrid.height
+            Layout.preferredHeight: detailContent.implicitHeight
+              + detailCard.contentTopInset + detailCard.contentBottomInset
+            Layout.minimumHeight: Layout.preferredHeight
             radius: root.cornerRadius
             color: Style.normalFill
             borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
             padding: Style.spacing.panelPadding
 
             ColumnLayout {
+              id: detailContent
               anchors.fill: parent
               anchors.topMargin: parent.contentTopInset
               anchors.rightMargin: parent.contentRightInset
@@ -747,15 +754,76 @@ Item {
               anchors.leftMargin: parent.contentLeftInset
               spacing: Style.spacing.md
 
-              Text {
+              RowLayout {
                 Layout.fillWidth: true
-                text: root.selectedApp ? root.selectedApp.name : "No selection"
-                textFormat: Text.PlainText
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
+                spacing: Style.spacing.controlGap
+
+                BorderSurface {
+                  Layout.preferredWidth: Style.space(42)
+                  Layout.preferredHeight: Style.space(42)
+                  radius: root.cornerRadius
+                  color: root.background
+                  borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+
+                  Image {
+                    anchors.centerIn: parent
+                    width: Style.font.iconLarge
+                    height: Style.font.iconLarge
+                    sourceSize.width: width * Screen.devicePixelRatio
+                    sourceSize.height: height * Screen.devicePixelRatio
+                    source: root.iconSource(root.selectedApp ? root.selectedApp.icon : "")
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                  }
+                }
+
+                ColumnLayout {
+                  Layout.fillWidth: true
+                  spacing: Style.spacing.xs
+
+                  RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Style.spacing.controlGap
+
+                    Text {
+                      text: root.selectedApp ? root.selectedApp.name : "No selection"
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.heading
+                      font.weight: Font.DemiBold
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: root.selectedApp && root.selectedApp.appId
+                        ? root.selectedApp.appId : "Unidentified App"
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      opacity: 0.5
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideMiddle
+                    }
+                  }
+
+                  Text {
+                    Layout.fillWidth: true
+                    text: root.selectedApp
+                      ? root.selectedApp.windowCount
+                        + (root.selectedApp.windowCount === 1 ? " window" : " windows")
+                        + (root.selectedApp.workspaces.length
+                          ? " · Workspace " + root.selectedApp.workspaces.join(", ") : "")
+                      : "No App Windows"
+                    textFormat: Text.PlainText
+                    color: root.foreground
+                    opacity: 0.58
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                }
               }
 
               Text {
@@ -772,66 +840,110 @@ Item {
                 elide: Text.ElideRight
               }
 
-              Item { Layout.fillHeight: true }
-
-              Text {
+              Rectangle {
                 Layout.fillWidth: true
-                text: root.selectedApp && root.selectedApp.appId
-                  ? root.selectedApp.appId : "Unidentified App"
-                textFormat: Text.PlainText
-                color: root.foreground
-                opacity: 0.5
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideMiddle
+                height: Style.spacing.hairline
+                color: Util.alpha(root.foreground, 0.16)
               }
 
-              Button {
+              GridLayout {
                 Layout.fillWidth: true
-                text: "Focus"
-                bordered: true
-                enabled: root.selectedApp !== null
-                opacity: enabled ? 1 : 0.5
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.focusSelectedApp()
-              }
+                columns: root.compactActions ? 1 : 2
+                columnSpacing: Style.spacing.controlGap
+                rowSpacing: Style.spacing.sm
 
-              Button {
-                Layout.fillWidth: true
-                text: "Close"
-                bordered: true
-                enabled: root.selectedApp !== null
-                opacity: enabled ? 1 : 0.5
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.requestGracefulClose()
-              }
+                Text {
+                  Layout.fillWidth: true
+                  text: "Close / Kill · all App Windows"
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  opacity: 0.58
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
 
-              Button {
-                Layout.fillWidth: true
-                text: "Force Kill"
-                bordered: true
-                enabled: root.selectedApp !== null && !root.forceKillRequests.length
-                opacity: enabled ? 1 : 0.5
-                foreground: Color.urgent
-                fontFamily: root.fontFamily
-                onClicked: root.requestForceKill()
+                RowLayout {
+                  Layout.fillWidth: root.compactActions
+                  Layout.alignment: Qt.AlignRight
+                  spacing: Style.spacing.sm
+
+                  Button {
+                    Layout.fillWidth: root.compactActions
+                    text: "Focus  ↵"
+                    bordered: true
+                    enabled: root.selectedApp !== null
+                    opacity: enabled ? 1 : 0.5
+                    background: root.selectedBackground
+                    foreground: root.selectedText
+                    fontFamily: root.fontFamily
+                    onClicked: root.focusSelectedApp()
+                  }
+
+                  Button {
+                    Layout.fillWidth: root.compactActions
+                    text: "Close  Del"
+                    bordered: true
+                    enabled: root.selectedApp !== null
+                    opacity: enabled ? 1 : 0.5
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    onClicked: root.requestGracefulClose()
+                  }
+
+                  Button {
+                    Layout.fillWidth: root.compactActions
+                    text: "Kill  ⇧Del"
+                    bordered: true
+                    enabled: root.selectedApp !== null && !root.forceKillRequests.length
+                    opacity: enabled ? 1 : 0.5
+                    foreground: Color.urgent
+                    fontFamily: root.fontFamily
+                    onClicked: root.requestForceKill()
+                  }
+                }
               }
             }
           }
         }
 
-        Text {
+        RowLayout {
           Layout.fillWidth: true
-          text: root.footerMessage
-            || "Enter / Click  Focus  ·  Delete  Close Request  ·  Shift+Delete  Force Kill  ·  ↑↓  Select  ·  PgUp/PgDn  Page  ·  Home/End  Jump  ·  Esc  Clear / Close"
-          textFormat: Text.PlainText
-          horizontalAlignment: Text.AlignRight
-          color: root.foreground
-          opacity: root.footerMessage ? 1 : 0.5
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+          spacing: Style.spacing.controlGap
+
+          Text {
+            visible: root.footerMessage === ""
+            text: "↑↓ Select · Enter Focus"
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.5
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            Layout.fillWidth: true
+            visible: root.footerMessage !== ""
+            text: root.footerMessage
+            textFormat: Text.PlainText
+            horizontalAlignment: Text.AlignRight
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+
+          Text {
+            visible: root.footerMessage === ""
+            Layout.fillWidth: true
+            text: "Esc Clear / Close"
+            textFormat: Text.PlainText
+            horizontalAlignment: Text.AlignRight
+            color: root.foreground
+            opacity: 0.5
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
       }
     }

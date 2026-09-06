@@ -49,7 +49,7 @@ A request for every app window in the selected app to close through its normal
 application-controlled shutdown flow.
 _Avoid_: Kill, terminate
 
-**Force Kill**:
+**Kill**:
 An explicitly confirmed request for the desktop to immediately end the window
 owners belonging to the selected app, without privilege elevation.
 _Avoid_: Close, process-tree kill

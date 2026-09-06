@@ -2,13 +2,17 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
+  normalizedHyprlandAddress,
   runningApps,
   filterRunningApps,
   orderRunningApps,
   initialSelectedIdentity,
   mostRecentlyActiveAppWindow,
+  focusCommand,
   gracefulCloseTargets,
   forceKillScope,
   forceKillScopeIsExclusive,
@@ -18,6 +22,20 @@ const {
   pageSelectionIndex,
   reconcileSelectedIdentity
 } = require("../ProcDeckModel.js");
+
+test("Graceful Close targets are exposed as a QML-visible function declaration", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "ProcDeckModel.js"), "utf8");
+  assert.match(source, /^function gracefulCloseTargets\(/m);
+});
+
+test("Hyprland addresses normalize real runtime values and reject selectors", () => {
+  assert.deepEqual([
+    normalizedHyprlandAddress("55E1c24dd5B0"),
+    normalizedHyprlandAddress(" 0x55E1c24dd5B0 "),
+    normalizedHyprlandAddress("title:.*"),
+    normalizedHyprlandAddress("")
+  ], ["0x55e1c24dd5b0", "0x55e1c24dd5b0", "", ""]);
+});
 
 test("ten App Windows with four normalized identities form four Running Apps", () => {
   const snapshots = [
@@ -67,6 +85,42 @@ test("each Unidentified App Window remains its own Running App", () => {
       ["unknown:mystery-2", 1]
     ]
   );
+});
+
+test("stale windows are excluded while a live Unidentified App remains", () => {
+  const liveHandle = {};
+  const apps = runningApps([
+    {
+      id: "stale",
+      handle: null,
+      appId: "",
+      title: "Closed Window",
+      hyprlandAddress: "dead"
+    },
+    {
+      id: "live",
+      handle: liveHandle,
+      appId: "",
+      title: "Live Window",
+      hyprlandAddress: "cafe"
+    }
+  ], () => null);
+
+  assert.deepEqual(
+    apps.map(app => [app.identity, app.name, app.windowCount]),
+    [["unknown:live", "Live Window", 1]]
+  );
+});
+
+test("duplicate snapshots with the same normalized address count once", () => {
+  const apps = runningApps([
+    { id: "first", handle: {}, appId: "org.app", hyprlandAddress: "ABC" },
+    { id: "duplicate", handle: {}, appId: "org.app", hyprlandAddress: "0xabc" }
+  ], () => null);
+
+  assert.deepEqual(apps.map(app => [app.identity, app.windowCount]), [
+    ["app:org.app", 1]
+  ]);
 });
 
 test("presentation metadata enriches records without changing Running App identity", () => {
@@ -231,6 +285,15 @@ test("focus selects the most recently active App Window within the Selected App"
   ], [selectedRecent, activated, single, null, null, null]);
 });
 
+test("focus uses an exact selector for a real unprefixed Hyprland address", () => {
+  assert.equal(
+    focusCommand({ hyprlandAddress: "55E1c24dd5B0" }),
+    'hl.dsp.focus({ window = "address:0x55e1c24dd5b0" })'
+  );
+  assert.equal(focusCommand({ hyprlandAddress: "title:.*" }), "");
+  assert.equal(focusCommand(null), "");
+});
+
 test("Graceful Close targets every App Window in the Selected App and no others", () => {
   const selectedFirst = { id: "selected-first", appId: "org.selected" };
   const outside = { id: "outside", appId: "org.other" };
@@ -271,7 +334,18 @@ test("confirmed Force Kill targets each valid Selected App owner exactly once", 
 
   assert.deepEqual(forceKillTargets(selectedApp, true), [
     'hl.dsp.window.kill({ window = "address:0xa1" })',
-    'hl.dsp.window.kill({ window = "address:0xB3" })'
+    'hl.dsp.window.kill({ window = "address:0xb3" })'
+  ]);
+});
+
+test("Force Kill accepts the real unprefixed Hyprland address format", () => {
+  const selectedApp = {
+    identity: "app:real",
+    windows: [{ ownerIdentity: 42, hyprlandAddress: "55E1c24dd5B0" }]
+  };
+
+  assert.deepEqual(forceKillTargets(selectedApp, true, [selectedApp]), [
+    'hl.dsp.window.kill({ window = "address:0x55e1c24dd5b0" })'
   ]);
 });
 
@@ -286,7 +360,7 @@ test("Force Kill confirmation rejects a same-count owner or address replacement"
 
   assert.deepEqual(reviewedScope, [
     { ownerIdentity: 41, hyprlandAddress: "0xa1" },
-    { ownerIdentity: 82, hyprlandAddress: "0xB3" }
+    { ownerIdentity: 82, hyprlandAddress: "0xb3" }
   ]);
   assert.equal(forceKillScopeMatches({
     windows: reviewedApp.windows.slice().reverse()

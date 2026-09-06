@@ -2,6 +2,12 @@ function normalizedAppId(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizedHyprlandAddress(value) {
+  var address = String(value || "").trim().toLowerCase();
+  if (/^[0-9a-f]+$/.test(address)) address = "0x" + address;
+  return /^0x[0-9a-f]+$/.test(address) ? address : "";
+}
+
 function normalizedFocusHistoryId(value) {
   if (value === undefined || value === null || value === "") return null;
   var focusHistoryId = Number(value);
@@ -23,11 +29,25 @@ function ownerSnapshot(snapshots, index, seen) {
 function runningApps(snapshots, desktopEntryLookup) {
   var groups = [];
   var groupsByIdentity = Object.create(null);
+  var seenAddresses = Object.create(null);
+  var liveSnapshots = [];
 
-  for (var i = 0; i < snapshots.length; i++) {
-    var owner = ownerSnapshot(snapshots, i, {});
+  for (var snapshotIndex = 0; snapshotIndex < snapshots.length; snapshotIndex++) {
+    var candidate = snapshots[snapshotIndex];
+    if (!candidate || typeof candidate !== "object" || candidate.handle === null) continue;
+
+    var hasAddress = candidate.hyprlandAddress !== undefined;
+    var address = normalizedHyprlandAddress(candidate.hyprlandAddress);
+    if (hasAddress && !address) continue;
+    if (address && seenAddresses[address]) continue;
+    if (address) seenAddresses[address] = true;
+    liveSnapshots.push(candidate);
+  }
+
+  for (var i = 0; i < liveSnapshots.length; i++) {
+    var owner = ownerSnapshot(liveSnapshots, i, {});
     var normalized = normalizedAppId(owner.appId);
-    var ownerIndex = snapshots.indexOf(owner);
+    var ownerIndex = liveSnapshots.indexOf(owner);
     var identity = normalized
       ? "app:" + normalized
       : "unknown:" + String(owner.id || ownerIndex);
@@ -51,18 +71,18 @@ function runningApps(snapshots, desktopEntryLookup) {
       groups.push(group);
     }
     group.windowCount++;
-    group.windows.push(snapshots[i]);
+    group.windows.push(liveSnapshots[i]);
 
-    var workspace = String(snapshots[i].workspace || "").trim();
+    var workspace = String(liveSnapshots[i].workspace || "").trim();
     if (workspace && group.workspaces.indexOf(workspace) === -1)
       group.workspaces.push(workspace);
 
-    var title = String(snapshots[i].title || "").trim();
-    if (title && (snapshots[i].activated || !group.currentTitle))
+    var title = String(liveSnapshots[i].title || "").trim();
+    if (title && (liveSnapshots[i].activated || !group.currentTitle))
       group.currentTitle = title;
 
-    if (snapshots[i].activated === true) group.activated = true;
-    var focusHistoryId = normalizedFocusHistoryId(snapshots[i].focusHistoryId);
+    if (liveSnapshots[i].activated === true) group.activated = true;
+    var focusHistoryId = normalizedFocusHistoryId(liveSnapshots[i].focusHistoryId);
     if (focusHistoryId !== null
         && (group.focusHistoryId === null || focusHistoryId < group.focusHistoryId))
       group.focusHistoryId = focusHistoryId;
@@ -116,22 +136,22 @@ function initialSelectedIdentity(apps) {
   return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
 }
 
-function appWindows(runningApp) {
+function gracefulCloseTargets(runningApp) {
   return runningApp && Array.isArray(runningApp.windows)
     ? runningApp.windows.filter(function(window) { return window && typeof window === "object"; })
     : [];
 }
 
 function forceKillScope(runningApp) {
-  var windows = appWindows(runningApp);
+  var windows = gracefulCloseTargets(runningApp);
   var seenOwners = Object.create(null);
   var scope = [];
   for (var i = 0; i < windows.length; i++) {
     var owner = windows[i].ownerIdentity;
-    var address = String(windows[i].hyprlandAddress || "");
+    var address = normalizedHyprlandAddress(windows[i].hyprlandAddress);
     if (typeof owner !== "number" || !isFinite(owner)
         || owner <= 0 || Math.floor(owner) !== owner
-        || !/^0x[0-9a-f]+$/i.test(address) || seenOwners[owner])
+        || !address || seenOwners[owner])
       continue;
 
     seenOwners[owner] = true;
@@ -166,7 +186,7 @@ function forceKillScopeIsExclusive(runningApp, allApps) {
   for (var i = 0; i < allApps.length; i++) {
     var app = allApps[i];
     if (!app || app.identity === runningApp.identity) continue;
-    var windows = appWindows(app);
+    var windows = gracefulCloseTargets(app);
     for (var j = 0; j < windows.length; j++) {
       if (selectedOwners["owner:" + windows[j].ownerIdentity]) return false;
     }
@@ -193,7 +213,7 @@ function forceKillResponseState(response, chunk, ended) {
 }
 
 function mostRecentlyActiveAppWindow(runningApp) {
-  var windows = appWindows(runningApp);
+  var windows = gracefulCloseTargets(runningApp);
   if (!windows.length) return null;
 
   for (var i = 0; i < windows.length; i++)
@@ -214,6 +234,13 @@ function mostRecentlyActiveAppWindow(runningApp) {
     }
   }
   return rankedWindow && !rankIsTied ? rankedWindow : null;
+}
+
+function focusCommand(window) {
+  var address = normalizedHyprlandAddress(window && window.hyprlandAddress);
+  return address
+    ? 'hl.dsp.focus({ window = "address:' + address + '" })'
+    : "";
 }
 
 function pageSelectionIndex(currentIndex, resultCount, pageSize, direction) {
@@ -238,12 +265,14 @@ function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    normalizedHyprlandAddress: normalizedHyprlandAddress,
     runningApps: runningApps,
     filterRunningApps: filterRunningApps,
     orderRunningApps: orderRunningApps,
     initialSelectedIdentity: initialSelectedIdentity,
     mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,
-    gracefulCloseTargets: appWindows,
+    focusCommand: focusCommand,
+    gracefulCloseTargets: gracefulCloseTargets,
     forceKillScope: forceKillScope,
     forceKillScopeIsExclusive: forceKillScopeIsExclusive,
     forceKillScopeMatches: forceKillScopeMatches,
