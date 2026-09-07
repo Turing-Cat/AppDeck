@@ -7,8 +7,11 @@ const path = require("node:path");
 
 const {
   normalizedHyprlandAddress,
+  normalizedDesktopEntryId,
   runningApps,
-  filterRunningApps,
+  fuzzyNameScore,
+  runningAppForDesktopEntry,
+  searchResults,
   orderRunningApps,
   initialSelectedIdentity,
   mostRecentlyActiveAppWindow,
@@ -193,28 +196,115 @@ test("live updates preserve the Selected App or choose the nearest remaining row
   assert.equal(reconcileSelectedIdentity("app:browser", 0, []), "");
 });
 
-test("a Search Query matches every term across Running App fields", () => {
-  const apps = runningApps([
-    { id: "browser", appId: "org.browser", title: "Release Notes" },
-    { id: "editor", appId: "com.editor", title: "ProcDeck README" },
-    { id: "chat", appId: "org.chat", title: "Team Room" }
-  ], appId => appId === "org.browser"
-    ? { name: "Web Browser", icon: "web-browser" }
-    : null);
+test("fuzzy name matching ranks exact, prefix, substring, and subsequence matches", () => {
+  const exact = fuzzyNameScore("Firefox", "firefox");
+  const prefix = fuzzyNameScore("Firefox", "fire");
+  const substring = fuzzyNameScore("Firefox", "fox");
+  const subsequence = fuzzyNameScore("Firefox", "ffx");
 
-  assert.deepEqual([
-    filterRunningApps(apps, "WEB").map(app => app.identity),
-    filterRunningApps(apps, "com.editor").map(app => app.identity),
-    filterRunningApps(apps, "release").map(app => app.identity),
-    filterRunningApps(apps, "  web   notes ").map(app => app.identity),
-    filterRunningApps(apps, "web procdeck").map(app => app.identity)
-  ], [
-    ["app:org.browser"],
-    ["app:com.editor"],
-    ["app:org.browser"],
-    ["app:org.browser"],
-    []
+  assert.ok(exact > prefix);
+  assert.ok(prefix > substring);
+  assert.ok(substring > subsequence);
+  assert.ok(subsequence >= 0);
+  assert.equal(fuzzyNameScore("Firefox", "fxf"), -1);
+  assert.ok(fuzzyNameScore("axxxxxaybc", "abc")
+    > fuzzyNameScore("axyzbxc", "abc"));
+  assert.ok(fuzzyNameScore("Visual Studio Code", "visual code") >= 0);
+  assert.ok(fuzzyNameScore("微信", "微信") >= 0);
+});
+
+test("software search includes installed apps when empty and ranks all matches together", () => {
+  const browserEntry = { id: "org.browser", name: "Web Browser", icon: "browser" };
+  const running = runningApps([
+    { id: "browser", appId: "org.browser", title: "Release Notes" }
+  ], () => browserEntry);
+  const entries = [
+    browserEntry,
+    { id: "com.code.Editor", name: "Code Editor", icon: "editor" },
+    { id: "org.hidden", name: "Hidden Editor", noDisplay: true },
+    { id: "com.code.Editor.desktop", name: "Duplicate Editor" },
+    { id: "org.fox", name: "Fox" },
+    { id: "org.chat", name: "Team Chat" }
+  ];
+
+  assert.deepEqual(searchResults(running, entries, "").map(result => result.name), [
+    "Web Browser", "Code Editor", "Fox", "Team Chat"
   ]);
+  assert.deepEqual(searchResults(running, entries, "editor code").map(result => result.name), [
+    "Code Editor"
+  ]);
+  assert.deepEqual(searchResults(running, entries, "release"), []);
+  assert.deepEqual(searchResults(running, entries, "org.browser"), []);
+  assert.deepEqual(searchResults(running, entries, "browser").map(result => result.kind), [
+    "running"
+  ]);
+  assert.deepEqual(searchResults(running, entries, "fox").map(result => result.name), [
+    "Fox"
+  ]);
+});
+
+test("a stronger Launchable App name match outranks a weaker Running App match", () => {
+  const running = [{
+    kind: "running",
+    identity: "app:firefox-nightly",
+    appId: "firefox-nightly",
+    desktopEntryId: "firefox-nightly",
+    name: "Firefox Nightly"
+  }];
+
+  assert.deepEqual(
+    searchResults(running, [{ id: "org.fox", name: "Fox" }], "fox")
+      .map(result => [result.name, result.kind]),
+    [["Fox", "launch"], ["Firefox Nightly", "running"]]
+  );
+});
+
+test("Launchable Apps sort stably and desktop entry ids match with or without suffix", () => {
+  const entries = [
+    { id: "org.zulu", name: "Same" },
+    { id: "org.alpha", name: "same" },
+    { id: "org.notes", name: "Notes" }
+  ];
+  const running = [{
+    kind: "running",
+    identity: "app:notes",
+    appId: "org.notes.desktop",
+    desktopEntryId: "",
+    name: "Notes",
+    windows: []
+  }];
+
+  assert.equal(normalizedDesktopEntryId(" Org.Notes.desktop "), "org.notes");
+  assert.deepEqual(
+    searchResults(running, entries, "same").map(result => result.desktopEntryId),
+    ["org.alpha", "org.zulu"]
+  );
+  assert.equal(runningAppForDesktopEntry(running, "org.notes"), running[0]);
+  assert.equal(runningAppForDesktopEntry(running, "org.missing"), null);
+});
+
+test("selection follows an installed app through both running-state transitions", () => {
+  const runningResult = {
+    kind: "running",
+    identity: "app:org.editor",
+    appId: "org.editor",
+    desktopEntryId: "org.editor"
+  };
+  const launchResult = {
+    kind: "launch",
+    identity: "launch:org.editor",
+    appId: "",
+    desktopEntryId: "org.editor"
+  };
+
+  assert.equal(
+    reconcileSelectedIdentity(launchResult, 0, [runningResult]),
+    "app:org.editor"
+  );
+  assert.equal(
+    reconcileSelectedIdentity(runningResult, 0, [launchResult]),
+    "launch:org.editor"
+  );
 });
 
 test("Activity Order uses the startup seed then follows live Active App changes", () => {
@@ -240,14 +330,18 @@ test("Activity Order uses the startup seed then follows live Active App changes"
 });
 
 test("opening selects the Previous App when it exists", () => {
-  const app = (identity, activated = false) => ({ identity, activated });
+  const app = (identity, activated = false, kind = "running") => ({
+    identity, activated, kind
+  });
 
   assert.deepEqual([
     initialSelectedIdentity([app("app:active", true), app("app:previous"), app("app:older")]),
     initialSelectedIdentity([app("app:recent"), app("app:older")]),
     initialSelectedIdentity([app("app:only")]),
+    initialSelectedIdentity([app("app:only", true), app("launch:editor", false, "launch")]),
+    initialSelectedIdentity([app("launch:editor", false, "launch")]),
     initialSelectedIdentity([])
-  ], ["app:previous", "app:recent", "app:only", ""]);
+  ], ["app:previous", "app:recent", "app:only", "app:only", "launch:editor", ""]);
 });
 
 test("focus selects the most recently active App Window within the Selected App", () => {

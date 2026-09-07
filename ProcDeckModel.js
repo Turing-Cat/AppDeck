@@ -2,6 +2,11 @@ function normalizedAppId(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizedDesktopEntryId(value) {
+  var id = normalizedAppId(value);
+  return id.slice(-8) === ".desktop" ? id.slice(0, -8) : id;
+}
+
 function normalizedHyprlandAddress(value) {
   var address = String(value || "").trim().toLowerCase();
   if (/^[0-9a-f]+$/.test(address)) address = "0x" + address;
@@ -56,8 +61,10 @@ function runningApps(snapshots, desktopEntryLookup) {
       var appId = String(owner.appId || "").trim();
       var entry = appId && desktopEntryLookup ? desktopEntryLookup(appId) : null;
       group = {
+        kind: "running",
         identity: identity,
         appId: appId,
+        desktopEntryId: String((entry && entry.id) || ""),
         name: String((entry && entry.name) || appId || owner.title || "Unidentified App"),
         icon: String((entry && entry.icon) || "application-x-executable"),
         windowCount: 0,
@@ -91,15 +98,136 @@ function runningApps(snapshots, desktopEntryLookup) {
   return groups;
 }
 
-function filterRunningApps(apps, query) {
-  var terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (!terms.length) return apps;
+function normalizedSearchText(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
 
-  return apps.filter(function(app) {
-    var searchable = [app.name, app.appId].concat(app.windows.map(function(window) {
-      return window.title;
-    })).join("\n").toLowerCase();
-    return terms.every(function(term) { return searchable.indexOf(term) !== -1; });
+function fuzzyTermScore(name, term) {
+  if (name === term) return 400000 - name.length;
+  if (name.indexOf(term) === 0) return 300000 - name.length;
+
+  var substringIndex = name.indexOf(term);
+  if (substringIndex !== -1)
+    return 200000 - substringIndex * 100 - name.length;
+
+  var bestGapCount = Infinity;
+  var bestFirstIndex = Infinity;
+  var firstIndex = name.indexOf(term.charAt(0));
+  while (firstIndex !== -1) {
+    var previousIndex = firstIndex;
+    for (var i = 1; i < term.length; i++) {
+      previousIndex = name.indexOf(term.charAt(i), previousIndex + 1);
+      if (previousIndex === -1) break;
+    }
+    if (previousIndex !== -1) {
+      var gapCount = previousIndex - firstIndex + 1 - term.length;
+      if (gapCount < bestGapCount
+          || (gapCount === bestGapCount && firstIndex < bestFirstIndex)) {
+        bestGapCount = gapCount;
+        bestFirstIndex = firstIndex;
+      }
+    }
+    firstIndex = name.indexOf(term.charAt(0), firstIndex + 1);
+  }
+
+  return bestGapCount === Infinity ? -1
+    : 100000 - bestGapCount * 100 - bestFirstIndex * 10 - name.length;
+}
+
+function fuzzyNameScore(name, query) {
+  var normalizedName = normalizedSearchText(name);
+  var normalizedQuery = normalizedSearchText(query);
+  if (!normalizedQuery) return 0;
+
+  var terms = normalizedQuery.split(" ");
+  var score = 0;
+  for (var i = 0; i < terms.length; i++) {
+    var termScore = fuzzyTermScore(normalizedName, terms[i]);
+    if (termScore < 0) return -1;
+    score += termScore;
+  }
+
+  if (normalizedName === normalizedQuery) score += 4000000;
+  else if (normalizedName.indexOf(normalizedQuery) === 0) score += 3000000;
+  else if (normalizedName.indexOf(normalizedQuery) !== -1) score += 2000000;
+  return score;
+}
+
+function runningAppForDesktopEntry(apps, desktopEntryId) {
+  var id = normalizedDesktopEntryId(desktopEntryId);
+  if (!id) return null;
+
+  for (var i = 0; i < apps.length; i++) {
+    if (apps[i].kind !== "launch"
+        && (normalizedDesktopEntryId(apps[i].desktopEntryId) === id
+          || normalizedDesktopEntryId(apps[i].appId) === id))
+      return apps[i];
+  }
+  return null;
+}
+
+function searchResults(runningApps, desktopEntries, query) {
+  var runningEntryIds = Object.create(null);
+  var seenEntryIds = Object.create(null);
+  var launchableApps = [];
+
+  runningApps.forEach(function(app) {
+    var entryId = normalizedDesktopEntryId(app.desktopEntryId);
+    var appId = normalizedDesktopEntryId(app.appId);
+    if (entryId) runningEntryIds[entryId] = true;
+    if (appId) runningEntryIds[appId] = true;
+  });
+
+  (desktopEntries || []).forEach(function(entry) {
+    var entryId = normalizedDesktopEntryId(entry && entry.id);
+    var name = String((entry && entry.name) || (entry && entry.id) || "").trim();
+    if (!entry || entry.noDisplay === true || !entryId || !name
+        || runningEntryIds[entryId] || seenEntryIds[entryId])
+      return;
+
+    seenEntryIds[entryId] = true;
+    launchableApps.push({
+      kind: "launch",
+      identity: "launch:" + entryId,
+      appId: "",
+      desktopEntryId: String(entry.id || "").trim(),
+      desktopEntry: entry,
+      name: name,
+      icon: String(entry.icon || "application-x-executable"),
+      windowCount: 0,
+      workspaces: [],
+      currentTitle: "",
+      activated: false,
+      focusHistoryId: null,
+      windows: []
+    });
+  });
+
+  launchableApps.sort(function(a, b) {
+    var aName = a.name.toLowerCase();
+    var bName = b.name.toLowerCase();
+    if (aName !== bName) return aName < bName ? -1 : 1;
+    return a.desktopEntryId < b.desktopEntryId ? -1
+      : a.desktopEntryId > b.desktopEntryId ? 1 : 0;
+  });
+
+  var results = runningApps.concat(launchableApps);
+  if (!normalizedSearchText(query)) return results;
+
+  return results.map(function(app) {
+    return { app: app, score: fuzzyNameScore(app.name, query) };
+  }).filter(function(result) {
+    return result.score >= 0;
+  }).sort(function(a, b) {
+    if (a.score !== b.score) return b.score - a.score;
+    if (a.app.kind !== b.app.kind) return a.app.kind === "running" ? -1 : 1;
+    var aName = normalizedSearchText(a.app.name);
+    var bName = normalizedSearchText(b.app.name);
+    if (aName !== bName) return aName < bName ? -1 : 1;
+    return a.app.identity < b.app.identity ? -1
+      : a.app.identity > b.app.identity ? 1 : 0;
+  }).map(function(result) {
+    return result.app;
   });
 }
 
@@ -133,7 +261,10 @@ function orderRunningApps(apps, priorActivityOrder) {
 
 function initialSelectedIdentity(apps) {
   if (!apps.length) return "";
-  return apps.length > 1 && apps[0].activated ? apps[1].identity : apps[0].identity;
+  var runningApps = apps.filter(function(app) { return app.kind !== "launch"; });
+  if (!runningApps.length) return apps[0].identity;
+  return runningApps.length > 1 && runningApps[0].activated
+    ? runningApps[1].identity : runningApps[0].identity;
 }
 
 function gracefulCloseTargets(runningApp) {
@@ -250,11 +381,26 @@ function pageSelectionIndex(currentIndex, resultCount, pageSize, direction) {
   return Math.max(0, Math.min(resultCount - 1, current + (direction < 0 ? -page : page)));
 }
 
-function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
+function reconcileSelectedIdentity(previousSelection, previousIndex, apps) {
   if (!apps.length) return "";
+
+  var previousIdentity = typeof previousSelection === "object" && previousSelection
+    ? previousSelection.identity : String(previousSelection || "");
 
   for (var i = 0; i < apps.length; i++) {
     if (apps[i].identity === previousIdentity) return previousIdentity;
+  }
+
+  var previousEntryId = typeof previousSelection === "object" && previousSelection
+    ? normalizedDesktopEntryId(previousSelection.desktopEntryId || previousSelection.appId)
+    : previousIdentity.indexOf("launch:") === 0
+      ? previousIdentity.slice(7) : "";
+  if (previousEntryId) {
+    for (var j = 0; j < apps.length; j++) {
+      if (normalizedDesktopEntryId(apps[j].desktopEntryId || apps[j].appId)
+          === previousEntryId)
+        return apps[j].identity;
+    }
   }
 
   var index = Number(previousIndex);
@@ -266,8 +412,11 @@ function reconcileSelectedIdentity(previousIdentity, previousIndex, apps) {
 if (typeof module !== "undefined") {
   module.exports = {
     normalizedHyprlandAddress: normalizedHyprlandAddress,
+    normalizedDesktopEntryId: normalizedDesktopEntryId,
     runningApps: runningApps,
-    filterRunningApps: filterRunningApps,
+    fuzzyNameScore: fuzzyNameScore,
+    runningAppForDesktopEntry: runningAppForDesktopEntry,
+    searchResults: searchResults,
     orderRunningApps: orderRunningApps,
     initialSelectedIdentity: initialSelectedIdentity,
     mostRecentlyActiveAppWindow: mostRecentlyActiveAppWindow,

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "procdeck.app",
   "name": "ProcDeck",
-  "version": "0.1.0",
-  "description": "Focus, close, or force-kill running GUI applications",
+  "version": "0.2.0",
+  "description": "Find, start, focus, close, or force-kill GUI applications",
   "kinds": ["overlay"],
   "keepLoaded": true,
   "entryPoints": { "overlay": "ProcDeck.qml" }

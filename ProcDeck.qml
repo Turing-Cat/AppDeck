@@ -21,6 +21,7 @@ Item {
   property string selectedIdentity: ""
   property string footerMessage: ""
   property var pendingFocusHandle: null
+  property string pendingLaunchIdentity: ""
   property var pendingForceKillApp: null
   property var forceKillRequests: []
   property int forceKillResponseCount: 0
@@ -37,6 +38,8 @@ Item {
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int rowHeight: Style.space(64)
   readonly property bool compactActions: card.width < Style.space(640)
+  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+  readonly property bool hasSearchQuery: root.searchQuery.trim().length > 0
   readonly property int selectedIndex: {
     for (var i = 0; i < apps.length; i++)
       if (apps[i].identity === selectedIdentity) return i
@@ -51,6 +54,8 @@ Item {
   }
 
   function iconSource(icon) {
+    if (root.appLibrary && typeof root.appLibrary.iconSource === "function")
+      return root.appLibrary.iconSource(icon)
     var value = String(icon || "")
     if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
     if (value.charAt(0) === "/") return Util.fileUrl(value)
@@ -94,7 +99,35 @@ Item {
     return out
   }
 
+  function desktopEntries() {
+    if (root.appLibrary && typeof root.appLibrary.sortedEntries === "function") {
+      var rows = root.appLibrary.sortedEntries("")
+      return rows.map(function(row) { return row.entry })
+    }
+    return DesktopEntries.applications.values || []
+  }
+
+  function desktopEntry(entryId) {
+    var normalizedId = ProcDeckModel.normalizedDesktopEntryId(entryId)
+    var entries = root.desktopEntries()
+    for (var i = 0; i < entries.length; i++) {
+      if (ProcDeckModel.normalizedDesktopEntryId(entries[i].id) === normalizedId)
+        return entries[i]
+    }
+    return null
+  }
+
+  function updateSearchResults(previousSelection, previousIndex, preserveSelection) {
+    root.apps = ProcDeckModel.searchResults(
+      root.allApps, root.desktopEntries(), root.searchQuery)
+    root.selectedIdentity = preserveSelection
+      ? ProcDeckModel.reconcileSelectedIdentity(previousSelection, previousIndex, root.apps)
+      : root.apps.length ? root.apps[0].identity : ""
+    root.revealSelected()
+  }
+
   function rebuild() {
+    var previousSelection = root.selectedApp
     var previousIndex = root.selectedIndex
     var groupedApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
       return DesktopEntries.heuristicLookup(appId)
@@ -103,10 +136,7 @@ Item {
 
     root.activityOrderIdentities = nextApps.map(function(app) { return app.identity })
     root.allApps = nextApps
-    root.apps = ProcDeckModel.filterRunningApps(nextApps, root.searchQuery)
-    root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
-      root.selectedIdentity, previousIndex, root.apps)
-    root.revealSelected()
+    root.updateSearchResults(previousSelection, previousIndex, true)
   }
 
   function scheduleRebuild() {
@@ -115,6 +145,7 @@ Item {
 
   function open(payloadJson) {
     root.clearPendingFocus()
+    root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
     root.searchQuery = ""
     root.footerMessage = ""
@@ -129,12 +160,8 @@ Item {
 
   function setSearchQuery(query) {
     root.clearPendingFocus()
-    var previousIndex = root.selectedIndex
     root.searchQuery = query
-    root.apps = ProcDeckModel.filterRunningApps(root.allApps, query)
-    root.selectedIdentity = ProcDeckModel.reconcileSelectedIdentity(
-      root.selectedIdentity, previousIndex, root.apps)
-    root.revealSelected()
+    root.updateSearchResults(null, 0, false)
   }
 
   function select(delta) {
@@ -170,9 +197,13 @@ Item {
   }
 
   function focusSelectedApp() {
+    root.focusApp(root.selectedApp)
+  }
+
+  function focusApp(app) {
     root.clearPendingFocus()
     root.footerMessage = ""
-    var target = ProcDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
+    var target = ProcDeckModel.mostRecentlyActiveAppWindow(app)
     var command = ProcDeckModel.focusCommand(target)
     if (!target || !target.handle || !command) {
       root.reportFocusError()
@@ -195,9 +226,62 @@ Item {
     })
   }
 
+  function activateSelectedApp() {
+    if (!root.selectedApp) return
+    if (root.selectedApp && root.selectedApp.kind === "launch")
+      root.launchSelectedApp()
+    else
+      root.focusSelectedApp()
+  }
+
+  function launchSelectedApp() {
+    root.clearPendingFocus()
+    root.footerMessage = ""
+    var selected = root.selectedApp
+    if (!selected || selected.kind !== "launch" || root.pendingLaunchIdentity) return
+
+    var entryId = selected.desktopEntryId
+    root.rebuild()
+    var runningApp = ProcDeckModel.runningAppForDesktopEntry(root.allApps, entryId)
+    if (runningApp) {
+      root.selectedIdentity = runningApp.identity
+      root.focusApp(runningApp)
+      return
+    }
+
+    var entry = root.desktopEntry(entryId)
+    if (!entry) {
+      root.footerMessage = "This app is no longer available."
+      root.restoreListFocus()
+      return
+    }
+
+    root.pendingLaunchIdentity = "launch:" + ProcDeckModel.normalizedDesktopEntryId(entryId)
+    root.opened = false
+    Qt.callLater(function() {
+      if (!root.pendingLaunchIdentity) return
+      try {
+        if (root.appLibrary && typeof root.appLibrary.launch === "function")
+          root.appLibrary.launch(entry.id, entry.name)
+        else if (typeof entry.execute === "function")
+          entry.execute()
+        else
+          throw new Error("No desktop application launcher is available")
+        root.pendingLaunchIdentity = ""
+        root.dismiss()
+      } catch (error) {
+        root.pendingLaunchIdentity = ""
+        root.opened = true
+        root.footerMessage = "Unable to start this app."
+        root.restoreListFocus()
+      }
+    })
+  }
+
   function requestGracefulClose() {
     root.clearPendingFocus()
     root.footerMessage = ""
+    if (!root.selectedApp || root.selectedApp.kind !== "running") return
     var targets = ProcDeckModel.gracefulCloseTargets(root.selectedApp)
     var failures = 0
 
@@ -230,7 +314,7 @@ Item {
       root.footerMessage = "A Kill request is still pending."
       return
     }
-    if (!root.selectedApp) {
+    if (!root.selectedApp || root.selectedApp.kind !== "running") {
       root.footerMessage = "Unable to request Kill."
       return
     }
@@ -331,12 +415,14 @@ Item {
 
   function close() {
     root.clearPendingFocus()
+    root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
     root.opened = false
   }
 
   function dismiss() {
     root.clearPendingFocus()
+    root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
@@ -453,6 +539,11 @@ Item {
     function onValuesChanged() { root.scheduleRebuild() }
   }
 
+  Connections {
+    target: root.appLibrary
+    function onAppsChanged() { root.scheduleRebuild() }
+  }
+
   Component.onCompleted: {
     Hyprland.refreshToplevels()
     root.rebuild()
@@ -509,7 +600,7 @@ Item {
             else root.dismiss()
             event.accepted = true
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.focusSelectedApp()
+            root.activateSelectedApp()
             event.accepted = true
           } else if (event.key === Qt.Key_Delete) {
             if (event.modifiers & Qt.ShiftModifier)
@@ -591,7 +682,7 @@ Item {
             spacing: Style.spacing.xs
 
             Text {
-              text: "Running Apps"
+              text: "Apps"
               textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
@@ -601,10 +692,10 @@ Item {
 
             Text {
               Layout.fillWidth: true
-              text: root.searchQuery || "Type to search…"
+              text: root.hasSearchQuery ? root.searchQuery : "Type to search…"
               textFormat: Text.PlainText
               color: root.foreground
-              opacity: root.searchQuery ? 1 : 0.58
+              opacity: root.hasSearchQuery ? 1 : 0.58
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               elide: Text.ElideRight
@@ -612,7 +703,9 @@ Item {
           }
 
           Text {
-            text: root.allApps.length + (root.allApps.length === 1 ? " app" : " apps")
+            text: root.apps.length
+              + (root.hasSearchQuery ? " matches" : " apps")
+              + " · " + root.allApps.length + " running"
               + " · " + root.totalWindows
               + (root.totalWindows === 1 ? " window" : " windows")
             textFormat: Text.PlainText
@@ -693,10 +786,12 @@ Item {
 
                     Text {
                       Layout.fillWidth: true
-                      text: appRow.modelData.windowCount
-                        + (appRow.modelData.windowCount === 1 ? " window" : " windows")
-                        + (appRow.modelData.workspaces.length
-                          ? " · Workspace " + appRow.modelData.workspaces.join(", ") : "")
+                      text: appRow.modelData.kind === "launch"
+                        ? "Not running · " + appRow.modelData.desktopEntryId + " · Start Running"
+                        : appRow.modelData.windowCount
+                          + (appRow.modelData.windowCount === 1 ? " window" : " windows")
+                          + (appRow.modelData.workspaces.length
+                            ? " · Workspace " + appRow.modelData.workspaces.join(", ") : "")
                       textFormat: Text.PlainText
                       color: appRow.selected ? root.selectedText : root.foreground
                       opacity: 0.58
@@ -712,7 +807,7 @@ Item {
                   cursorShape: Qt.PointingHandCursor
                   onClicked: {
                     root.selectAbsolute(appRow.index)
-                    root.focusSelectedApp()
+                    root.activateSelectedApp()
                   }
                 }
               }
@@ -721,9 +816,9 @@ Item {
                 visible: root.apps.length === 0
                 anchors.centerIn: parent
                 width: parent.width - Style.spacing.panelPadding * 2
-                text: root.allApps.length === 0
-                  ? "No Running Apps"
-                  : "No matches for “" + root.searchQuery + "”"
+                text: root.hasSearchQuery
+                  ? "No matching apps"
+                  : "No Apps"
                 textFormat: Text.PlainText
                 horizontalAlignment: Text.AlignHCenter
                 color: root.foreground
@@ -797,8 +892,10 @@ Item {
 
                     Text {
                       Layout.fillWidth: true
-                      text: root.selectedApp && root.selectedApp.appId
-                        ? root.selectedApp.appId : "Unidentified App"
+                      text: root.selectedApp && root.selectedApp.kind === "launch"
+                        ? root.selectedApp.desktopEntryId
+                        : root.selectedApp && root.selectedApp.appId
+                          ? root.selectedApp.appId : "Unidentified App"
                       textFormat: Text.PlainText
                       color: root.foreground
                       opacity: 0.5
@@ -810,7 +907,9 @@ Item {
 
                   Text {
                     Layout.fillWidth: true
-                    text: root.selectedApp
+                    text: root.selectedApp && root.selectedApp.kind === "launch"
+                      ? "Not running · Ready to start"
+                      : root.selectedApp
                       ? root.selectedApp.windowCount
                         + (root.selectedApp.windowCount === 1 ? " window" : " windows")
                         + (root.selectedApp.workspaces.length
@@ -828,8 +927,10 @@ Item {
 
               Text {
                 Layout.fillWidth: true
-                text: root.selectedApp && root.selectedApp.currentTitle
-                  ? root.selectedApp.currentTitle : "No window title"
+                text: root.selectedApp && root.selectedApp.kind === "launch"
+                  ? "Installed application"
+                  : root.selectedApp && root.selectedApp.currentTitle
+                    ? root.selectedApp.currentTitle : "No window title"
                 textFormat: Text.PlainText
                 color: root.foreground
                 opacity: 0.78
@@ -854,7 +955,9 @@ Item {
 
                 Text {
                   Layout.fillWidth: true
-                  text: "Close / Kill · all App Windows"
+                  text: root.selectedApp && root.selectedApp.kind === "launch"
+                    ? "Start this installed application"
+                    : "Close / Kill · all App Windows"
                   textFormat: Text.PlainText
                   color: root.foreground
                   opacity: 0.58
@@ -870,21 +973,25 @@ Item {
 
                   Button {
                     Layout.fillWidth: root.compactActions
-                    text: "Focus  ↵"
+                    text: root.selectedApp && root.selectedApp.kind === "launch"
+                      ? "Start Running  ↵" : "Focus  ↵"
                     bordered: true
-                    enabled: root.selectedApp !== null
+                    enabled: root.selectedApp !== null && !root.pendingLaunchIdentity
                     opacity: enabled ? 1 : 0.5
                     background: root.selectedBackground
                     foreground: root.selectedText
                     fontFamily: root.fontFamily
-                    onClicked: root.focusSelectedApp()
+                    onClicked: root.activateSelectedApp()
                   }
 
                   Button {
+                    visible: root.selectedApp !== null
+                      && root.selectedApp.kind === "running"
                     Layout.fillWidth: root.compactActions
                     text: "Close  Del"
                     bordered: true
                     enabled: root.selectedApp !== null
+                      && root.selectedApp.kind === "running"
                     opacity: enabled ? 1 : 0.5
                     foreground: root.foreground
                     fontFamily: root.fontFamily
@@ -892,10 +999,14 @@ Item {
                   }
 
                   Button {
+                    visible: root.selectedApp !== null
+                      && root.selectedApp.kind === "running"
                     Layout.fillWidth: root.compactActions
                     text: "Kill  ⇧Del"
                     bordered: true
-                    enabled: root.selectedApp !== null && !root.forceKillRequests.length
+                    enabled: root.selectedApp !== null
+                      && root.selectedApp.kind === "running"
+                      && !root.forceKillRequests.length
                     opacity: enabled ? 1 : 0.5
                     foreground: Color.urgent
                     fontFamily: root.fontFamily
@@ -913,7 +1024,9 @@ Item {
 
           Text {
             visible: root.footerMessage === ""
-            text: "↑↓ Select · Enter Focus"
+            text: "↑↓ Select · Enter "
+              + (root.selectedApp && root.selectedApp.kind === "launch"
+                ? "Start Running" : "Focus")
             textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.5

@@ -1,19 +1,24 @@
 # ProcDeck
 
-ProcDeck provides a shared language for managing running graphical applications
-across an Omarchy desktop.
+ProcDeck provides a shared language for finding and managing graphical
+applications across an Omarchy desktop.
 
 ## Language
 
 **ProcDeck**:
-A keyboard-first, desktop-wide running-application switcher whose secondary
-capabilities allow applications to be closed or forcibly ended.
+A keyboard-first, desktop-wide application finder that opens installed apps,
+switches to running apps, and can close or forcibly end them.
 _Avoid_: Process manager, task manager
 
 **Running App**:
 One or more app windows that the desktop reports as sharing the same
 application identity.
 _Avoid_: App group, process, task
+
+**Launchable App**:
+An installed desktop application that has no corresponding running app and can
+be requested to start running.
+_Avoid_: Command, background process
 
 **App Window**:
 A normal graphical application window managed by the desktop and belonging to
@@ -25,8 +30,8 @@ The running app that owns the currently focused app window.
 _Avoid_: Focused row
 
 **Selected App**:
-The running app currently targeted by ProcDeck's focus and termination actions.
-It may differ from the active app.
+The running or launchable app currently targeted by its available ProcDeck
+action. A selected running app may differ from the active app.
 _Avoid_: Active app
 
 **Previous App**:
@@ -55,9 +60,8 @@ owners belonging to the selected app, without privilege elevation.
 _Avoid_: Close, process-tree kill
 
 **Search Query**:
-One or more case-insensitive terms that must each match the running app's name,
-reported identity, or one of its app-window titles.
-_Avoid_: Fuzzy query
+One or more terms used to rank apps by case-insensitive name similarity.
+_Avoid_: Command query, process query
 
 **Activity Order**:
 The ordering of running apps from most to least recently active, with the active
@@ -68,3 +72,8 @@ _Avoid_: Alphabetical order, workspace order
 The acknowledged sending of a graceful-close request. It does not claim that
 the receiving app has exited or accepted the request.
 _Avoid_: Closed app, successful exit
+
+**Start Running**:
+The request for the desktop to launch a selected launchable app. It does not
+claim that an app window appeared or that a background process changed state.
+_Avoid_: Opened app, successful launch

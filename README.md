@@ -1,15 +1,14 @@
 # ProcDeck
 
-ProcDeck is a keyboard-first running-app switcher and closer for Omarchy 4.
-It manages GUI applications as groups of windows instead of exposing a raw
-process table.
+ProcDeck is a keyboard-first application finder, starter, switcher, and closer for
+Omarchy 4. It manages running GUI applications as groups of windows instead of
+exposing a raw process table.
 
-Status: ProcDeck v0.1 is implemented and repository-verified as of 2026-09-04.
+Status: ProcDeck v0.2 is implemented and verified as of 2026-09-07.
 
-## v0.1 scope
+## v0.2 scope
 
-The first release has one job: open instantly, find a running GUI app, then
-focus or close it.
+ProcDeck opens instantly and presents installed and running GUI apps in one list.
 
 Included:
 
@@ -18,7 +17,9 @@ Included:
   assigning an explicit child dialog to its parent's application.
 - Application name and icon resolved from the matching desktop entry, with
   readable fallbacks when no entry exists.
-- Search across application name, `appId`, and window titles.
+- Fuzzy search every visible app by its displayed name, using exact, prefix,
+  substring, and ordered-character matches.
+- Start a selected launchable app through Omarchy's shared application library.
 - Window count and workspace list for every application.
 - Most-recently-used ordering, with the active application first.
 - The previous application initially selected, so opening ProcDeck and pressing
@@ -35,10 +36,10 @@ Explicitly deferred:
 - CPU, memory, disk, network, PID trees, and other system-monitor features.
 - Background polling.
 - Per-window expansion, window previews, history, favourites, settings UI,
-  custom grouping rules, and application launching.
+  custom grouping rules, arbitrary command execution, and launch arguments.
 - Support for compositors other than Hyprland.
 
-Resource metrics are intentionally out of v0.1. A Wayland application group
+Resource metrics are intentionally out of v0.2. A Wayland application group
 does not map reliably to one Linux process tree: browsers, Electron apps,
 portals, and sandboxed apps all break that assumption in different ways. Add
 metrics only after a measured need and a documented grouping policy.
@@ -47,13 +48,13 @@ metrics only after a measured need and a documented grouping policy.
 
 | Input | Result |
 | --- | --- |
-| Type | Filter applications |
+| Type | Fuzzy-filter all apps by displayed name |
 | `Up` / `Down` | Move selection |
 | `Page Up` / `Page Down` | Move by a page |
 | `Home` / `End` | Jump to first / last result |
-| `Enter` or row click | Focus the selected app and close ProcDeck |
-| `Delete` | Gracefully close all windows in the selected app |
-| `Shift + Delete` | Open the Kill confirmation |
+| `Enter` or row click | Focus a Running App or Start Running a Launchable App |
+| `Delete` | Gracefully close all windows in the selected Running App |
+| `Shift + Delete` | Open the selected Running App's Kill confirmation |
 | `Escape` | Clear a non-empty search; otherwise close ProcDeck |
 
 The Kill confirmation names the application and window count. `Enter`
@@ -61,30 +62,31 @@ confirms; `Escape` cancels and returns focus to the list. A failed action must
 leave the overlay usable and show a short inline footer error. ProcDeck never
 requests elevated privileges.
 
-After an application's last window disappears, the next visible row keeps the
-selection. Closing the last result shows an empty state instead of dismissing
-the overlay.
+When an installed application gains or loses its last app window, its row stays
+selected and changes state. A disappearing result moves selection to the nearest
+row. Closing the last result shows an empty state instead of dismissing the
+overlay.
 
 ## UI contract
 
-Open the [interactive v0.1 mockup](docs/mockups/procdeck-v01.html) in a browser
-to inspect the responsive layout and simulated interactions.
+The [interactive v0.1 mockup](docs/mockups/procdeck-v01.html) remains a baseline
+for the responsive layout; it does not include launchable search results.
 
 The overlay reuses Omarchy's shared `Color`, `Style`, `BorderSurface`, and
 `ConfirmDialog` primitives. It contains only four regions:
 
-1. A search/header row: `Running Apps` plus the current app/window totals.
-2. A single application list. Each row shows icon, name, window count, and
-   workspace labels.
+1. A search/header row plus the current running-app and window totals.
+2. A single application list. Running rows show window and workspace details;
+   launchable rows state that the app is not running and can be started.
 3. A compact bottom detail/action area for the selected application: icon,
-   identity, window scope, current title, Focus, Close, and Kill.
+   identity, state, and the actions available for its kind.
 4. A footer with the keyboard hints.
 
 The application list fills the available body height and the detail area grows
-only to fit its content. Focus is the primary action; Close and Kill state that
-they apply to every app window. At narrow widths, the action group wraps below
-that scope label. The selected row uses the shell's existing selected-state
-colours; Kill alone uses the urgent colour. ProcDeck owns no theme palette.
+only to fit its content. A Running App shows Focus, Close, and Kill; a Launchable
+App shows only Start Running. At narrow widths, the action group wraps below its
+scope label. The selected row uses the shell's existing selected-state colours;
+Kill alone uses the urgent colour. ProcDeck owns no theme palette.
 
 ## Data and action model
 
@@ -97,15 +99,23 @@ Hyprland.toplevels
   -> enrich with DesktopEntries.heuristicLookup(appId)
   -> filter and sort in a pure JavaScript model
   -> render the QML list
+
+DesktopEntries.applications
+  -> keep visible installed desktop applications
+  -> merge entries with matching Running Apps
+  -> keep unmatched entries as Launchable Apps
+  -> fuzzy-rank the unified list by displayed name
 ```
 
-Normal actions do not spawn shell commands:
+Actions stay within APIs supplied by Hyprland, Quickshell, and the Omarchy shell:
 
 - Focus first releases the overlay's exclusive keyboard focus, then asks
   Hyprland to focus the group's most recently active window by exact address.
 - Close calls `Toplevel.close()` on each window in the group.
 - Kill asks Hyprland to immediately end the exact window owners belonging to the
   selected app. It does not infer a process tree or use name-based `pkill`.
+- Start Running delegates the selected desktop entry to Omarchy's shared application
+  library, falling back to `DesktopEntry.execute()` when the service is absent.
 
 If `appId` is empty and the window has no identified parent, ProcDeck keeps that
 window as its own group. It must not merge unrelated unknown windows just
@@ -137,14 +147,16 @@ ProcDeck/
 ```
 
 No package manager, build step, daemon, helper service, install hook, assets
-directory, or component hierarchy is needed for v0.1. A marketplace preview
+directory, or component hierarchy is needed for v0.2. A marketplace preview
 image can be added only when the UI is stable.
 
 MRU state lives only for the current `omarchy-shell` session and is not written
-to disk. Search uses case-insensitive, space-separated terms; every term must
-match the application name, `appId`, or one grouped window title. Live list
-updates preserve the selected application whenever it still exists, and new
-applications never steal selection.
+to disk. An empty query shows Running Apps in activity order followed by
+Launchable Apps in name order. A non-empty query uses case-insensitive,
+space-separated terms against displayed names and ranks exact, prefix,
+substring, then ordered-character matches. Input changes select the highest
+ranked result; desktop updates preserve the selected application whenever it
+still exists.
 
 The intended manifest is:
 
@@ -153,8 +165,8 @@ The intended manifest is:
   "schemaVersion": 1,
   "id": "procdeck.app",
   "name": "ProcDeck",
-  "version": "0.1.0",
-  "description": "Focus, close, or kill running GUI applications",
+  "version": "0.2.0",
+  "description": "Find, start, focus, close, or force-kill GUI applications",
   "kinds": ["overlay"],
   "keepLoaded": true,
   "entryPoints": { "overlay": "ProcDeck.qml" }
@@ -199,20 +211,24 @@ changes are performed only after separate approval.
 
 ## Repository verification
 
-The repository-contained v0.1 passes its dependency-free Node self-check,
+The repository-contained v0.2 passes 26 dependency-free Node model tests,
 Omarchy 4.0.2 plugin validation, QML formatting/parsing, and `qmllint` against
 the installed Quickshell 0.3.1 and Hyprland 0.56.2 APIs.
 
-This verification did not create a development symlink, enable or rescan the
-plugin, toggle the shell, modify user configuration, or run the live desktop
-smoke matrix. Those user-environment changes and checks require separate
-approval.
+The enabled development plugin was reloaded by restarting Omarchy Shell. A live
+Pinta smoke test verified fuzzy matching with `pta`, Start Running, automatic
+transition to the running Focus / Close / Kill controls, Close, and the return
+to Start Running. The broader multi-window and multi-monitor matrix remains an
+acceptance check.
 
-## v0.1 acceptance checks
+## v0.2 acceptance checks
 
 - Ten windows with four app IDs render as four application rows.
-- Search matches app name, `appId`, and any grouped window title,
-  case-insensitively.
+- Empty search includes running and launchable apps; fuzzy search uses displayed
+  names and ranks all matching states together.
+- Running Apps show Focus, Close, and Kill. Launchable Apps show only Start
+  Running and cannot receive Close or Kill actions.
+- Selection follows an installed app through running-state changes.
 - The active app is first; subsequent focus changes update MRU order without
   polling.
 - Focus closes the overlay and activates the expected window.
