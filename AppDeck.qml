@@ -143,17 +143,67 @@ Item {
     rebuildTimer.restart()
   }
 
+  function handleKey(event) {
+    // Fcitx can leave a cursor attribute after cancelling an empty preedit.
+    if (searchInput.inputMethodComposing && searchInput.preeditText.length) return
+
+    if (root.pendingForceKillApp) {
+      if (forceKillConfirm.handleKey(event)) event.accepted = true
+      return
+    }
+
+    if (event.key === Qt.Key_Escape) {
+      if (root.searchQuery) root.setSearchQuery("")
+      else root.dismiss()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.activateSelectedApp()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Delete) {
+      if (event.modifiers & Qt.ShiftModifier)
+        root.requestForceKill()
+      else if (event.modifiers === Qt.NoModifier)
+        root.requestGracefulClose()
+      event.accepted = true
+    } else if (event.key === Qt.Key_U && event.modifiers === Qt.ControlModifier) {
+      root.setSearchQuery("")
+      event.accepted = true
+    } else if (event.key === Qt.Key_Up) {
+      root.select(-1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Down) {
+      root.select(1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_PageUp) {
+      root.selectPage(-1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_PageDown) {
+      root.selectPage(1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Home) {
+      root.selectAbsolute(0)
+      event.accepted = true
+    } else if (event.key === Qt.Key_End) {
+      root.selectAbsolute(root.apps.length - 1)
+      event.accepted = true
+    }
+  }
+
+  onOpenedChanged: {
+    if (!root.opened && searchInput.activeFocus) Qt.inputMethod.reset()
+  }
+
   function open(payloadJson) {
     root.clearPendingFocus()
     root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
-    root.searchQuery = ""
+    root.setSearchQuery("")
     root.footerMessage = ""
     root.rebuild()
     root.selectedIdentity = AppDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
     Qt.callLater(function() {
-      keyCatcher.forceActiveFocus()
+      searchInput.forceActiveFocus()
       root.revealSelected()
     })
   }
@@ -161,6 +211,7 @@ Item {
   function setSearchQuery(query) {
     root.clearPendingFocus()
     root.searchQuery = query
+    if (searchInput.text !== query) searchInput.text = query
     root.updateSearchResults(null, 0, false)
   }
 
@@ -403,7 +454,11 @@ Item {
 
   function restoreListFocus() {
     if (root.opened)
-      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      Qt.callLater(function() {
+        if (!root.opened) return
+        if (root.pendingForceKillApp) keyCatcher.forceActiveFocus()
+        else searchInput.forceActiveFocus()
+      })
   }
 
   function reportFocusError() {
@@ -589,55 +644,7 @@ Item {
         focus: root.opened
 
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (root.pendingForceKillApp) {
-            if (forceKillConfirm.handleKey(event)) event.accepted = true
-            return
-          }
-
-          if (event.key === Qt.Key_Escape) {
-            if (root.searchQuery) root.setSearchQuery("")
-            else root.dismiss()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.activateSelectedApp()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Delete) {
-            if (event.modifiers & Qt.ShiftModifier)
-              root.requestForceKill()
-            else if (event.modifiers === Qt.NoModifier)
-              root.requestGracefulClose()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.searchQuery)) {
-            root.setSearchQuery(Util.editedFilter(event, root.searchQuery))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.selectPage(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.selectPage(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Home) {
-            root.selectAbsolute(0)
-            event.accepted = true
-          } else if (event.key === Qt.Key_End) {
-            root.selectAbsolute(root.apps.length - 1)
-            event.accepted = true
-          } else if (event.text && event.text.length === 1
-                     && event.text.charCodeAt(0) >= 32
-                     && event.text.charCodeAt(0) !== 127
-                     && (event.modifiers === Qt.NoModifier
-                         || event.modifiers === Qt.ShiftModifier)) {
-            root.setSearchQuery(root.searchQuery + event.text)
-            event.accepted = true
-          }
-        }
+        Keys.onPressed: function(event) { root.handleKey(event) }
 
         ConfirmDialog {
           id: forceKillConfirm
@@ -690,15 +697,29 @@ Item {
               font.weight: Font.DemiBold
             }
 
-            Text {
+            TextInput {
+              id: searchInput
               Layout.fillWidth: true
-              text: root.hasSearchQuery ? root.searchQuery : "Type to search…"
-              textFormat: Text.PlainText
               color: root.foreground
-              opacity: root.hasSearchQuery ? 1 : 0.58
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
-              elide: Text.ElideRight
+              selectionColor: root.selectedBackground
+              selectedTextColor: root.selectedText
+              selectByMouse: true
+              clip: true
+              onTextEdited: root.setSearchQuery(text)
+              Keys.priority: Keys.BeforeItem
+              Keys.onPressed: function(event) { root.handleKey(event) }
+
+              Text {
+                anchors.fill: parent
+                visible: !searchInput.text && !searchInput.preeditText
+                text: "Type to search…"
+                textFormat: Text.PlainText
+                color: root.foreground
+                opacity: 0.58
+                font: searchInput.font
+              }
             }
           }
 

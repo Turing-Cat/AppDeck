@@ -211,6 +211,25 @@ changes are performed only after separate approval.
 
 ## Repository verification
 
+The search field uses Qt's native text input, including input-method composition
+and multi-character commits. While composing, panel shortcuts leave keys to the
+input method. With the default Fcitx5 Pinyin behavior, Space selects a Chinese
+candidate and Enter commits raw pinyin; neither activates an app while composing.
+
+Run the model and input regressions with:
+
+```bash
+node tests/model.test.js
+bash tests/run-input-tests.sh
+```
+
+The input check loads the complete plugin and sends Qt input-method and keyboard
+events through its window. It requires an active Wayland/Hyprland desktop,
+Omarchy Shell, Quickshell, Qt 6 development tools, `pkg-config`, and a C++ compiler.
+It briefly shows a test overlay without grabbing the desktop keyboard. The test
+replaces application data and launch/close actions with fixtures; no real app is
+launched, closed, or killed. Compilation happens in a temporary directory.
+
 The repository-contained v0.2 passes 26 dependency-free Node model tests,
 Omarchy 4.0.2 plugin validation, QML formatting/parsing, and `qmllint` against
 the installed Quickshell 0.3.1 and Hyprland 0.56.2 APIs.
