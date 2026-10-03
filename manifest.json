@@ -3,6 +3,7 @@
   "id": "appdeck.app",
   "name": "AppDeck",
   "version": "0.3.0",
+  "author": "Turing-Cat",
   "description": "Find, start, focus, close, or force-kill GUI applications",
   "kinds": ["overlay"],
   "keepLoaded": true,

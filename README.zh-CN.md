@@ -55,6 +55,22 @@ hyprctl configerrors
 omarchy-shell shell toggle appdeck.app
 ```
 
+### 禁用或卸载
+
+仅禁用插件、保留文件：
+
+```bash
+omarchy plugin disable appdeck.app
+```
+
+卸载插件，在终端运行并按提示确认：
+
+```bash
+omarchy plugin remove appdeck.app
+```
+
+如果配置了上文的快捷键，请从 `~/.config/hypr/bindings.lua` 中移除对应两行，再运行 `hyprctl reload`。如需恢复原来的绑定，在该文件中重新配置。插件不会自动修改快捷键。
+
 ## 使用
 
 1. 按 `Alt + Space` 打开面板。

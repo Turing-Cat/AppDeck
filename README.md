@@ -55,6 +55,22 @@ You can also toggle the panel from a terminal:
 omarchy-shell shell toggle appdeck.app
 ```
 
+### Disable or remove
+
+To disable AppDeck without removing its files:
+
+```bash
+omarchy plugin disable appdeck.app
+```
+
+To uninstall it, run and confirm when prompted:
+
+```bash
+omarchy plugin remove appdeck.app
+```
+
+If you added the shortcut above, remove those two lines from `~/.config/hypr/bindings.lua` and run `hyprctl reload`. Restore your previous binding there if needed. The plugin does not edit your keybindings automatically.
+
 ## Usage
 
 1. Press `Alt + Space` to open the panel.
