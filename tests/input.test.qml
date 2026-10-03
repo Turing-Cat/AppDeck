@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import InputTest 1.0
 
 ShellRoot {
@@ -40,6 +41,16 @@ ShellRoot {
     property bool activated: false
     function close() { test.closes++ }
   }
+  QtObject {
+    id: secondWindow
+    property bool activated: false
+    function close() { test.closes++ }
+  }
+  QtObject {
+    id: thirdWindow
+    property bool activated: false
+    function close() { test.closes++ }
+  }
 
   function check(condition, message) {
     if (!condition) throw new Error(message)
@@ -61,7 +72,19 @@ ShellRoot {
   function setRunningFixture() {
     test.app.allApps = [{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
       name: "AppDeck Test", icon: "", windowCount: 1, workspaces: ["1"], currentTitle: "Fixture",
-      windows: [{ handle: fixtureWindow, ownerIdentity: 2147483647, hyprlandAddress: "ffffffffffffffff" }] }]
+      windows: [{ id: "fixture", title: "Fixture", workspace: "1", handle: fixtureWindow,
+        ownerIdentity: 2147483647, hyprlandAddress: "ffffffffffffffff" }] }]
+  }
+
+  function setMultiWindowFixture() {
+    test.app.allApps = [{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
+      name: "AppDeck Test", icon: "", windowCount: 3, workspaces: ["1", "2", "3"], currentTitle: "Second",
+      windows: [
+        { id: "first", title: "First", workspace: "1", handle: fixtureWindow, focusHistoryId: 2, hyprlandAddress: "fffffffffffffff1" },
+        { id: "second", title: "Second", workspace: "2", handle: secondWindow, focusHistoryId: 0, hyprlandAddress: "fffffffffffffff2" },
+        { id: "third", title: "Third", workspace: "3", handle: thirdWindow, focusHistoryId: 1, hyprlandAddress: "fffffffffffffff3" }
+      ] }]
+    test.app.setSearchQuery("AppDeck Test")
   }
 
   function finish(code) {
@@ -87,6 +110,13 @@ ShellRoot {
     }
     test.app.shell = fixtureShell
     test.app.open("{}")
+    // Desktop fixtures must not be replaced by unrelated user desktop events.
+    // Only this test process's external event sources are muted; dispatches,
+    // input handling, live selection reconciliation and failure recovery run.
+    input.suppressEvents(Hyprland)
+    input.suppressEvents(Hyprland.toplevels)
+    for (var t = 0; t < Hyprland.toplevels.values.length; t++)
+      input.suppressEvents(Hyprland.toplevels.values[t])
     test.steps = [
       function chineseCommit() {
         check(input.focus(), "AppDeck has no focused input receiver")
@@ -226,6 +256,179 @@ ShellRoot {
         query("AppDeck Test")
         input.compose("", "中文")
         query("AppDeck Test中文")
+      },
+      function windowKeyboardSelection() {
+        setMultiWindowFixture()
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "second", "first Tab did not select the most recent window")
+        query("AppDeck Test")
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "third", "Tab did not select next window")
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "first", "Tab did not wrap to first window")
+        input.key(Qt.Key_Backtab, Qt.ShiftModifier)
+        check(test.app.selectedWindowId === "third", "Backtab did not wrap to last window")
+        input.key(Qt.Key_Tab, Qt.ShiftModifier)
+        check(test.app.selectedWindowId === "second", "Shift+Tab did not select previous window")
+        input.key(Qt.Key_Delete)
+        input.key(Qt.Key_Delete, Qt.ShiftModifier)
+        check(test.closes === 1 && !test.app.pendingForceKillApp, "window selection invoked Close or Kill")
+        input.key(Qt.Key_X, Qt.NoModifier, "x")
+        check(!test.app.selectedWindowId, "search editing did not exit window selection")
+        query("AppDeck Testx")
+      },
+      function windowNavigationAndComposition() {
+        setMultiWindowFixture()
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Tab, Qt.ControlModifier)
+        check(test.app.selectedWindowId === "second", "Ctrl+Tab changed window selection")
+        input.compose("zhongwen")
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "second", "composing Tab changed window selection")
+        input.compose("", "", true)
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "third", "empty Fcitx state blocked Tab")
+        input.compose("", "中文")
+        query("AppDeck Test中文")
+        check(!test.app.selectedWindowId, "Chinese commit did not exit window selection")
+        test.app.setSearchQuery("")
+        test.app.selectAbsolute(0)
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId, "running app did not enter window selection")
+        input.key(Qt.Key_Down)
+        check(test.app.selectedIndex === 1 && !test.app.selectedWindowId, "Down did not switch apps and exit window selection")
+        input.key(Qt.Key_Tab)
+        check(!test.app.selectedWindowId, "Launchable App entered window selection")
+        input.key(Qt.Key_Up)
+        check(test.app.selectedIndex === 0, "Up did not switch apps")
+      },
+      function liveWindowSelection() {
+        setMultiWindowFixture()
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Tab)
+        var original = test.app.selectedApp
+        // Replace desktop snapshots, preserving identity but changing order,
+        // title and workspace; new window objects must not steal selection.
+        var updated = Object.assign({}, original, { windows: [
+          Object.assign({}, original.windows[2], { title: "Moved", workspace: "9" }),
+          original.windows[0], original.windows[1],
+          { id: "new", title: "New", workspace: "4", handle: fixtureWindow, hyprlandAddress: "fffffffffffffff4" }
+        ], windowCount: 4 })
+        test.app.apps = [updated]
+        check(test.app.selectedWindowId === "third" && test.app.selectedWindow.workspace === "9",
+          "desktop update lost the selected window")
+        test.app.apps = [Object.assign({}, updated, { windows: updated.windows.slice(1), windowCount: 3 })]
+        check(!test.app.selectedWindowId && test.app.opened, "removed window did not clear selection")
+        check(test.app.footerMessage.indexOf("no longer available") >= 0, "removed window has no error message")
+        check(!test.app.pendingFocusHandle, "removed window silently requested another target")
+      },
+      function singleWindowAndUnknownRecent() {
+        setRunningFixture()
+        test.app.setSearchQuery("AppDeck Test")
+        input.key(Qt.Key_Backtab, Qt.ShiftModifier)
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "fixture", "single window cycling failed")
+        setMultiWindowFixture()
+        var app = test.app.selectedApp
+        test.app.apps = [Object.assign({}, app, { windows: app.windows.map(function(w) {
+          return Object.assign({}, w, { focusHistoryId: null })
+        }) })]
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "first", "unknown recent window did not fall back to first")
+        input.key(Qt.Key_Escape)
+        query("")
+        check(!test.app.selectedWindowId && test.app.opened, "Escape did not clear query and window selection")
+        input.key(Qt.Key_Escape)
+        check(!test.app.opened, "empty Escape did not close AppDeck")
+        test.app.open("{}")
+      },
+      function requestSpecifiedWindow() {
+        setMultiWindowFixture()
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Return)
+        check(test.app.pendingFocusHandle === thirdWindow, "Enter requested the recent window instead of selected window")
+        run.interval = 350
+      },
+      function recoverSpecifiedWindow() {
+        check(test.app.opened && test.app.footerMessage === "Unable to focus this window.", "specified Focus failure did not recover: " + test.app.footerMessage + ", selected=" + test.app.selectedIdentity + ", window=" + test.app.selectedWindowId)
+        check(test.app.selectedWindowId === "third", "Focus failure lost explicit selection")
+        query("AppDeck Test")
+        input.mouse("appWindow:first", false)
+        check(test.app.selectedWindowId === "third", "hover changed window selection")
+        input.mouse("appWindow:first")
+        check(test.app.pendingFocusHandle === fixtureWindow && test.app.selectedWindowId === "first", "mouse did not request clicked window")
+      },
+      function focusButtonAndAppActions() {
+        check(test.app.opened, "mouse Focus failure did not restore AppDeck")
+        query("AppDeck Test")
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === "second", "Tab did not continue from clicked window")
+        input.mouse("focusSelected")
+        check(test.app.pendingFocusHandle === secondWindow, "Focus button did not request selected window")
+      },
+      function closeAndKillButtonsInWindowSelection() {
+        check(test.app.opened, "Focus button failure did not restore AppDeck")
+        var before = test.closes
+        input.mouse("closeSelected")
+        check(test.closes === before + 3, "Close button did not target all app windows")
+        input.mouse("killSelected")
+        check(test.app.pendingForceKillApp && test.app.pendingForceKillApp.windowCount === 3, "Kill button did not keep app scope")
+        check(!test.app.forceKillRequests.length, "Kill button bypassed confirmation")
+        var selected = test.app.selectedWindowId
+        input.key(Qt.Key_Tab)
+        check(test.app.selectedWindowId === selected, "confirmation Tab cycled app windows")
+        input.key(Qt.Key_Escape)
+      },
+      function restoreAfterConfirmation() {
+        query("AppDeck Test")
+        check(test.app.selectedWindowId === "second", "Kill cancellation lost valid window selection")
+        input.compose("", "中文")
+        query("AppDeck Test中文")
+        check(!test.app.selectedWindowId, "input after confirmation did not reset window selection")
+      },
+      function disappearedBeforeDispatch() {
+        setMultiWindowFixture()
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Return)
+        check(test.app.pendingFocusHandle === secondWindow, "explicit target was not requested")
+        var app = test.app.selectedApp
+        test.app.apps = [Object.assign({}, app, { windows: [app.windows[0], app.windows[2]], windowCount: 2 })]
+        check(!test.app.pendingFocusHandle && test.app.opened && !test.app.selectedWindowId,
+          "target removed before dispatch did not cancel and restore")
+      },
+      function manyWindowSelection() {
+        setMultiWindowFixture()
+        var app = test.app.selectedApp
+        var windows = []
+        for (var i = 0; i < 14; i++) windows.push(Object.assign({}, app.windows[0], {
+          id: "long-" + i, title: "Long window " + i, focusHistoryId: i
+        }))
+        test.app.apps = [Object.assign({}, app, { windows: windows, windowCount: windows.length })]
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Backtab, Qt.ShiftModifier)
+        check(test.app.selectedWindowId === "long-13", "reverse cycling did not select last window")
+      },
+      function visibleWindowAndAppNavigation() {
+        var row = input.item("appWindow:long-13")
+        check(row && row.selected, "selected row was not created or highlighted after scrolling")
+        check(row.mapToItem(null, 0, 0).y > 0, "selected row remained above viewport")
+        var app = test.app.selectedApp
+        test.app.apps = [Object.assign({}, app, { windows: app.windows.map(function(w) {
+          return Object.assign({}, w, { title: "Updated " + w.title })
+        }) })]
+        check(test.app.selectedWindowId === "long-13", "title refresh lost scrolled selection")
+        input.key(Qt.Key_Home)
+        check(!test.app.selectedWindowId && test.app.selectedIndex === 0, "Home did not exit window selection")
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_PageDown)
+        check(!test.app.selectedWindowId, "Page Down did not exit window selection")
+        test.app.setSearchQuery("no-such-appdeck-test-app")
+        input.key(Qt.Key_Tab)
+        check(!test.app.selectedWindowId && test.app.apps.length === 0, "empty results entered window selection")
+        test.app.close()
+        test.app.open("{}")
+        check(!test.app.selectedWindowId, "reopen retained explicit window selection")
       }
     ]
     run.start()

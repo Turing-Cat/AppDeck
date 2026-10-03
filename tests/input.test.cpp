@@ -4,6 +4,7 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -24,6 +25,30 @@ public:
     return nullptr;
   }
   Q_INVOKABLE QObject *focus() { return window() ? window()->activeFocusItem() : nullptr; }
+  Q_INVOKABLE void suppressEvents(QObject *source) { if (source) source->blockSignals(true); }
+  Q_INVOKABLE QQuickItem *item(const QString &name) {
+    auto find = [&](auto &&self, QQuickItem *parent) -> QQuickItem * {
+      if (parent->objectName() == name) return parent;
+      for (auto *child : parent->childItems())
+        if (auto *found = self(self, child)) return found;
+      return nullptr;
+    };
+    return window() ? find(find, window()->contentItem()) : nullptr;
+  }
+  Q_INVOKABLE void mouse(const QString &name, bool click = true) {
+    QPointer<QQuickWindow> target = window();
+    auto *row = item(name);
+    if (!target || !row) { qmlEngine(this)->throwError(QStringLiteral("Visible item not found: ") + name); return; }
+    auto position = row->mapToScene({row->width() / 2, row->height() / 2});
+    auto global = target->mapToGlobal(position);
+    QMouseEvent move(QEvent::MouseMove, position, position, global, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(target, &move);
+    if (!click) return;
+    QMouseEvent press(QEvent::MouseButtonPress, position, position, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, position, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(target, &press);
+    if (target) QCoreApplication::sendEvent(target, &release);
+  }
   Q_INVOKABLE void compose(const QString &preedit, const QString &commit = {}, bool cursorAttribute = false) {
     auto *target = window();
     if (!target) { qmlEngine(this)->throwError(QStringLiteral("No visible AppDeck window")); return; }

@@ -19,6 +19,8 @@ Item {
   property var activityOrderIdentities: []
   property string searchQuery: ""
   property string selectedIdentity: ""
+  property string selectedWindowAppIdentity: ""
+  property string selectedWindowId: ""
   property string footerMessage: ""
   property var pendingFocusHandle: null
   property string pendingLaunchIdentity: ""
@@ -37,7 +39,7 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int rowHeight: Style.space(64)
-  readonly property bool compactActions: card.width < Style.space(640)
+  readonly property bool compactActions: detailCard.width < Style.space(440)
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
   readonly property bool hasSearchQuery: root.searchQuery.trim().length > 0
   readonly property int selectedIndex: {
@@ -47,6 +49,10 @@ Item {
   }
   readonly property var selectedApp: selectedIndex >= 0 && selectedIndex < apps.length
     ? apps[selectedIndex] : null
+  readonly property bool windowSelectionActive: selectedWindowId !== ""
+    && selectedWindowAppIdentity === selectedIdentity
+  readonly property var selectedWindow: windowSelectionActive
+    ? root.windowById(selectedWindowId) : null
   readonly property int totalWindows: {
     var total = 0
     for (var i = 0; i < allApps.length; i++) total += allApps[i].windowCount
@@ -126,6 +132,70 @@ Item {
     root.revealSelected()
   }
 
+  onSelectedIdentityChanged: root.clearWindowSelection()
+  onAppsChanged: root.reconcileWindowSelection()
+
+  function clearWindowSelection() {
+    root.selectedWindowId = ""
+    root.selectedWindowAppIdentity = ""
+  }
+
+  function windowById(id) {
+    var app = null
+    for (var a = 0; a < root.apps.length; a++)
+      if (root.apps[a].identity === root.selectedIdentity) app = root.apps[a]
+    if (!app || app.kind !== "running") return null
+    for (var i = 0; i < app.windows.length; i++)
+      if (app.windows[i].id === id) return app.windows[i]
+    return null
+  }
+
+  function reconcileWindowSelection() {
+    if (!root.windowSelectionActive) return
+    if (!root.windowById(root.selectedWindowId)) {
+      if (root.pendingFocusHandle) {
+        root.opened = true
+        root.restoreListFocus()
+      }
+      root.clearWindowSelection()
+      root.clearPendingFocus()
+      root.footerMessage = "Selected window is no longer available. Select again."
+    } else root.revealSelectedWindow()
+  }
+
+  function selectWindow(delta) {
+    var app = root.selectedApp
+    if (!app || app.kind !== "running" || !app.windows.length) return
+    var index = -1
+    if (root.windowSelectionActive) {
+      for (var i = 0; i < app.windows.length; i++)
+        if (app.windows[i].id === root.selectedWindowId) index = i
+    }
+    if (index < 0) {
+      var recent = AppDeckModel.mostRecentlyActiveAppWindow(app)
+      index = 0
+      for (var j = 0; recent && j < app.windows.length; j++)
+        if (app.windows[j].id === recent.id) index = j
+    } else index = (index + delta + app.windows.length) % app.windows.length
+    root.clearPendingFocus()
+    root.footerMessage = ""
+    root.selectedWindowAppIdentity = app.identity
+    root.selectedWindowId = app.windows[index].id
+    root.revealSelectedWindow()
+  }
+
+  function revealSelectedWindow() {
+    Qt.callLater(function() {
+      if (!root.windowSelectionActive || !root.selectedApp) return
+      for (var i = 0; i < root.selectedApp.windows.length; i++) {
+        if (root.selectedApp.windows[i].id === root.selectedWindowId) {
+          windowList.positionViewAtIndex(i, ListView.Contain)
+          return
+        }
+      }
+    })
+  }
+
   function rebuild() {
     var previousSelection = root.selectedApp
     var previousIndex = root.selectedIndex
@@ -159,7 +229,15 @@ Item {
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       root.activateSelectedApp()
       event.accepted = true
+    } else if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+        && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+      root.selectWindow(event.key === Qt.Key_Backtab || event.modifiers & Qt.ShiftModifier ? -1 : 1)
+      event.accepted = true
     } else if (event.key === Qt.Key_Delete) {
+      if (root.windowSelectionActive) {
+        event.accepted = true
+        return
+      }
       if (event.modifiers & Qt.ShiftModifier)
         root.requestForceKill()
       else if (event.modifiers === Qt.NoModifier)
@@ -194,6 +272,7 @@ Item {
   }
 
   function open(payloadJson) {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
@@ -209,6 +288,7 @@ Item {
   }
 
   function setSearchQuery(query) {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     root.searchQuery = query
     if (searchInput.text !== query) searchInput.text = query
@@ -216,6 +296,7 @@ Item {
   }
 
   function select(delta) {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     if (!root.apps.length) return
     var index = root.selectedIndex
@@ -226,6 +307,7 @@ Item {
   }
 
   function selectAbsolute(index) {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     if (!root.apps.length) return
     index = Math.max(0, Math.min(index, root.apps.length - 1))
@@ -248,13 +330,18 @@ Item {
   }
 
   function focusSelectedApp() {
-    root.focusApp(root.selectedApp)
+    if (root.windowSelectionActive) root.focusWindow(root.selectedWindow)
+    else root.focusApp(root.selectedApp)
   }
 
   function focusApp(app) {
+    root.focusWindow(AppDeckModel.mostRecentlyActiveAppWindow(app))
+  }
+
+  function focusWindow(target) {
     root.clearPendingFocus()
     root.footerMessage = ""
-    var target = AppDeckModel.mostRecentlyActiveAppWindow(app)
+    target = target ? root.windowById(target.id) : null
     var command = AppDeckModel.focusCommand(target)
     if (!target || !target.handle || !command) {
       root.reportFocusError()
@@ -262,9 +349,16 @@ Item {
     }
 
     root.pendingFocusHandle = target.handle
+    var appIdentity = root.selectedIdentity
+    var targetId = target.id
     root.opened = false
     Qt.callLater(function() {
       if (!root.pendingFocusHandle) return
+      var current = root.selectedIdentity === appIdentity ? root.windowById(targetId) : null
+      if (!current || current.handle !== root.pendingFocusHandle) {
+        root.reportFocusError()
+        return
+      }
       focusAcknowledgementTimer.restart()
       try {
         Hyprland.dispatch(command)
@@ -464,11 +558,13 @@ Item {
   function reportFocusError() {
     root.clearPendingFocus()
     root.opened = true
-    root.footerMessage = "Unable to focus this app."
+    root.footerMessage = root.windowSelectionActive
+      ? "Unable to focus this window." : "Unable to focus this app."
     root.restoreListFocus()
   }
 
   function close() {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
@@ -476,6 +572,7 @@ Item {
   }
 
   function dismiss() {
+    root.clearWindowSelection()
     root.clearPendingFocus()
     root.pendingLaunchIdentity = ""
     root.clearForceKillConfirmation()
@@ -743,14 +840,17 @@ Item {
           color: Util.alpha(root.foreground, 0.16)
         }
 
-        ColumnLayout {
+        GridLayout {
           id: contentLayout
+          columns: card.width < Style.space(720) ? 1 : 2
+          columnSpacing: Style.spacing.panelGap
+          rowSpacing: Style.spacing.panelGap
           Layout.fillWidth: true
           Layout.fillHeight: true
-          spacing: Style.spacing.panelGap
 
           Item {
-            Layout.fillWidth: true
+            Layout.preferredWidth: contentLayout.columns === 2 ? contentLayout.width * 0.37 : -1
+            Layout.fillWidth: contentLayout.columns === 1
             Layout.fillHeight: true
 
             ListView {
@@ -853,9 +953,9 @@ Item {
           BorderSurface {
             id: detailCard
             Layout.fillWidth: true
-            Layout.preferredHeight: detailContent.implicitHeight
-              + detailCard.contentTopInset + detailCard.contentBottomInset
-            Layout.minimumHeight: Layout.preferredHeight
+            Layout.fillHeight: contentLayout.columns === 2
+            Layout.preferredHeight: Style.space(280)
+            Layout.minimumHeight: Style.space(240)
             radius: root.cornerRadius
             color: Style.normalFill
             borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
@@ -947,19 +1047,92 @@ Item {
               }
 
               Text {
+                visible: !root.selectedApp || root.selectedApp.kind === "launch"
                 Layout.fillWidth: true
-                text: root.selectedApp && root.selectedApp.kind === "launch"
-                  ? "Installed application"
-                  : root.selectedApp && root.selectedApp.currentTitle
-                    ? root.selectedApp.currentTitle : "No window title"
+                Layout.fillHeight: true
+                text: root.selectedApp ? "Installed application · Ready to start" : "No selection"
                 textFormat: Text.PlainText
                 color: root.foreground
-                opacity: 0.78
+                opacity: 0.58
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
                 wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
+              }
+
+              ListView {
+                id: windowList
+                readonly property var recentWindow: AppDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
+                visible: root.selectedApp !== null && root.selectedApp.kind === "running"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: Style.spacing.sm
+                model: visible ? root.selectedApp.windows : []
+                onModelChanged: {
+                  if (root.windowSelectionActive) root.revealSelectedWindow()
+                  else positionViewAtBeginning()
+                }
+
+                delegate: BorderSurface {
+                  id: windowRow
+                  objectName: "appWindow:" + modelData.id
+                  required property var modelData
+                  readonly property bool recent: windowList.recentWindow !== null
+                    && modelData.id === windowList.recentWindow.id
+                  readonly property bool selected: root.windowSelectionActive
+                    ? modelData.id === root.selectedWindowId : recent
+                  width: ListView.view.width
+                  height: windowInfo.implicitHeight + Style.spacing.rowPaddingX * 2
+                  radius: root.cornerRadius
+                  color: selected ? root.selectedBackground
+                    : windowMouse.containsMouse ? Style.normalFill : root.background
+                  borderSpec: Border.controlSpec(selected ? "selected" : "normal", root.foreground, Color.accent)
+
+                  ColumnLayout {
+                    id: windowInfo
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: Style.spacing.rowPaddingX
+                    spacing: Style.spacing.xs
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: modelData.title || "Untitled window"
+                      textFormat: Text.PlainText
+                      color: windowRow.selected ? root.selectedText : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      wrapMode: Text.Wrap
+                      maximumLineCount: 2
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: (modelData.workspace ? "Workspace " + modelData.workspace : "No workspace")
+                        + (recent ? " · Most recent" : "")
+                      textFormat: Text.PlainText
+                      color: windowRow.selected ? root.selectedText : root.foreground
+                      opacity: 0.58
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+
+                  MouseArea {
+                    id: windowMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      root.selectedWindowAppIdentity = root.selectedIdentity
+                      root.selectedWindowId = windowRow.modelData.id
+                      root.focusSelectedApp()
+                    }
+                  }
+                }
               }
 
               Rectangle {
@@ -970,7 +1143,7 @@ Item {
 
               GridLayout {
                 Layout.fillWidth: true
-                columns: root.compactActions ? 1 : 2
+                columns: 1
                 columnSpacing: Style.spacing.controlGap
                 rowSpacing: Style.spacing.sm
 
@@ -993,6 +1166,7 @@ Item {
                   spacing: Style.spacing.sm
 
                   Button {
+                    objectName: "focusSelected"
                     Layout.fillWidth: root.compactActions
                     text: root.selectedApp && root.selectedApp.kind === "launch"
                       ? "Start Running  ↵" : "Focus  ↵"
@@ -1006,6 +1180,7 @@ Item {
                   }
 
                   Button {
+                    objectName: "closeSelected"
                     visible: root.selectedApp !== null
                       && root.selectedApp.kind === "running"
                     Layout.fillWidth: root.compactActions
@@ -1020,6 +1195,7 @@ Item {
                   }
 
                   Button {
+                    objectName: "killSelected"
                     visible: root.selectedApp !== null
                       && root.selectedApp.kind === "running"
                     Layout.fillWidth: root.compactActions
@@ -1045,7 +1221,9 @@ Item {
 
           Text {
             visible: root.footerMessage === ""
-            text: "↑↓ Select · Enter "
+            text: (root.windowSelectionActive
+              ? "↑↓ Apps · Tab / Shift+Tab Windows · Enter "
+              : "↑↓ Apps · Tab Windows · Enter ")
               + (root.selectedApp && root.selectedApp.kind === "launch"
                 ? "Start Running" : "Focus")
             textFormat: Text.PlainText

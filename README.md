@@ -35,7 +35,7 @@ Explicitly deferred:
 
 - CPU, memory, disk, network, PID trees, and other system-monitor features.
 - Background polling.
-- Per-window expansion, window previews, history, favourites, settings UI,
+- Window screenshots, history, favourites, settings UI,
   custom grouping rules, arbitrary command execution, and launch arguments.
 - Support for compositors other than Hyprland.
 
@@ -52,12 +52,23 @@ metrics only after a measured need and a documented grouping policy.
 | `Up` / `Down` | Move selection |
 | `Page Up` / `Page Down` | Move by a page |
 | `Home` / `End` | Jump to first / last result |
-| `Enter` or row click | Focus a Running App or Start Running a Launchable App |
-| `Delete` | Gracefully close all windows in the selected Running App |
-| `Shift + Delete` | Open the selected Running App's Kill confirmation |
+| `Tab` / `Shift + Tab` | Enter window selection at the most recent window, then cycle forward / backward |
+| `Enter` / Focus | Focus the explicitly selected window, or the most recent window if none was explicitly selected; start a Launchable App |
+| Application row click | Focus that application's most recent window, or start a Launchable App |
+| Window row click | Focus that exact window, including on another workspace |
+| `Delete` | Gracefully close all windows in the selected Running App; inactive during window selection |
+| `Shift + Delete` | Open the selected Running App's Kill confirmation; inactive during window selection |
 | `Escape` | Clear a non-empty search; otherwise close AppDeck |
 
-The Kill confirmation names the application and window count. `Enter`
+Up / Down and the other application navigation keys always select applications,
+even during window selection. Editing the search exits window selection while
+keeping the native text input focused. Tab wraps within the selected app's
+windows and leaves Launchable Apps unchanged. Window selection follows stable
+window IDs through desktop updates; a removed target clears selection and shows
+an inline message instead of requesting a different window.
+
+The Close and Kill buttons always target all windows of the selected app,
+including during window selection. The Kill confirmation names the application and window count. `Enter`
 confirms; `Escape` cancels and returns focus to the list. A failed action must
 leave the overlay usable and show a short inline footer error. AppDeck never
 requests elevated privileges.
@@ -78,12 +89,17 @@ The overlay reuses Omarchy's shared `Color`, `Style`, `BorderSurface`, and
 1. A search/header row plus the current running-app and window totals.
 2. A single application list. Running rows show window and workspace details;
    launchable rows state that the app is not running and can be started.
-3. A compact bottom detail/action area for the selected application: icon,
-   identity, state, and the actions available for its kind.
+3. A right-hand detail/action area for the selected application: icon,
+   identity, state, a scrollable list of window titles and workspaces, and the
+   actions available for its kind. The most recent window is labelled, and the
+   explicit window selection is highlighted.
 4. A footer with the keyboard hints.
 
-The application list fills the available body height and the detail area grows
-only to fit its content. A Running App shows Focus, Close, and Kill; a Launchable
+The body uses two columns: the application list takes about 37% of the width,
+and the selected application details fill the right side. At narrow widths,
+the details move below the application list. Window rows are clickable; Enter
+and Focus use the explicit selection when present. Otherwise, they use the most
+recent window. A Running App shows Focus, Close, and Kill; a Launchable
 App shows only Start Running. At narrow widths, the action group wraps below its
 scope label. The selected row uses the shell's existing selected-state colours;
 Kill alone uses the urgent colour. AppDeck owns no theme palette.
@@ -110,7 +126,8 @@ DesktopEntries.applications
 Actions stay within APIs supplied by Hyprland, Quickshell, and the Omarchy shell:
 
 - Focus first releases the overlay's exclusive keyboard focus, then asks
-  Hyprland to focus the group's most recently active window by exact address.
+  Hyprland to focus the explicitly selected window, or the group's most recently
+  active window, by exact address.
 - Close calls `Toplevel.close()` on each window in the group.
 - Kill asks Hyprland to immediately end the exact window owners belonging to the
   selected app. It does not infer a process tree or use name-based `pkill`.
@@ -223,12 +240,16 @@ node tests/model.test.js
 bash tests/run-input-tests.sh
 ```
 
-The input check loads the complete plugin and sends Qt input-method and keyboard
-events through its window. It requires an active Wayland/Hyprland desktop,
+The input check loads the complete plugin and sends Qt input-method, keyboard,
+and mouse events through its window. It includes 26 input and window-selection
+steps, covering Tab cycling, live window updates, exact target requests, Close /
+Kill scope, and failure recovery. It requires an active Wayland/Hyprland desktop,
 Omarchy Shell, Quickshell, Qt 6 development tools, `pkg-config`, and a C++ compiler.
 It briefly shows a test overlay without grabbing the desktop keyboard. The test
 replaces application data and launch/close actions with fixtures; no real app is
-launched, closed, or killed. Compilation happens in a temporary directory.
+launched, closed, or killed. Desktop event sources are muted inside the test process so unrelated desktop
+changes cannot overwrite fixtures. Invalid test addresses exercise real
+Hyprland Focus failure recovery. Compilation happens in a temporary directory.
 
 The repository-contained v0.2 passes 26 dependency-free Node model tests,
 Omarchy 4.0.2 plugin validation, QML formatting/parsing, and `qmllint` against
