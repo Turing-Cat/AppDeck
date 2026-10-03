@@ -13,5 +13,5 @@ Status: resolved
 ## Answer
 
 Implemented on `codex/launch-app-from-search` using the host's visible desktop
-entry list and shared application launcher. ProcDeck does not parse commands or
+entry list and shared application launcher. AppDeck does not parse commands or
 poll for a new window, and an Open Request does not claim that launch succeeded.

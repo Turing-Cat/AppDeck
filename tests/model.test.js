@@ -24,10 +24,10 @@ const {
   forceKillResponseState,
   pageSelectionIndex,
   reconcileSelectedIdentity
-} = require("../ProcDeckModel.js");
+} = require("../AppDeckModel.js");
 
 test("Graceful Close targets are exposed as a QML-visible function declaration", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "ProcDeckModel.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "AppDeckModel.js"), "utf8");
   assert.match(source, /^function gracefulCloseTargets\(/m);
 });
 

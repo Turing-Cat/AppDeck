@@ -1,4 +1,4 @@
-# ProcDeck 实时列表与操作失效修复方案
+# AppDeck 实时列表与操作失效修复方案
 
 日期：2026-09-04
 
@@ -8,8 +8,8 @@
 
 | 用户现象 | 已确认根因 |
 | --- | --- |
-| 不要显示“子进程” | 多出来的并非进程树子进程，而是长驻 Quickshell 窗口模型中的历史窗口；其 Wayland handle 已为空，ProcDeck 却仍将它们显示为独立的 Unidentified App |
-| 应用无法切换 | 当前使用的 `Toplevel.activate()` 被 Hyprland 0.56.2 忽略；同时 ProcDeck 的 Exclusive overlay 未先释放焦点，即使改用有效的 Hyprland 地址调度也无法切换 |
+| 不要显示“子进程” | 多出来的并非进程树子进程，而是长驻 Quickshell 窗口模型中的历史窗口；其 Wayland handle 已为空，AppDeck 却仍将它们显示为独立的 Unidentified App |
+| 应用无法切换 | 当前使用的 `Toplevel.activate()` 被 Hyprland 0.56.2 忽略；同时 AppDeck 的 Exclusive overlay 未先释放焦点，即使改用有效的 Hyprland 地址调度也无法切换 |
 | 无法 Close | `gracefulCloseTargets` 仅是 Node `module.exports` 中的别名，QML 命名空间中不存在该函数，调用时直接抛出 `TypeError`；历史条目也会形成无 handle 的无效目标 |
 | 无法 Force Kill | Quickshell 实际地址不带 `0x`，代码却只接受带 `0x` 的地址，因此所有真实窗口在生成请求前就被过滤掉 |
 
@@ -20,18 +20,18 @@
 同一桌面会话中：
 
 - `hyprctl clients -j | jq 'length'` 返回 13 个真实客户端窗口。
-- ProcDeck 在临时测试窗口均已关闭后仍显示 23 个 Running App、28 个 App Window。
+- AppDeck 在临时测试窗口均已关闭后仍显示 23 个 Running App、28 个 App Window。
 - 列表底部存在已关闭的 WPS、WeChat 条目；它们没有 workspace，详情中显示为 `Unidentified App`。
 - 新启动的只读 Quickshell 探针同时读取到 13 个 `Hyprland.toplevels` 和 13 个 `ToplevelManager.toplevels`，且全部具有有效 Wayland handle。
 
 对应代码链路：
 
-1. `ProcDeck.qml:snapshots()` 无条件遍历 `Hyprland.toplevels.values`。
+1. `AppDeck.qml:snapshots()` 无条件遍历 `Hyprland.toplevels.values`。
 2. 当 `hyprlandToplevel.wayland === null` 时，仍生成 `handle: null`、`appId: ""` 的 snapshot。
-3. `ProcDeckModel.runningApps()` 将空身份按设计转换为独立的 Unidentified App。
+3. `AppDeckModel.runningApps()` 将空身份按设计转换为独立的 Unidentified App。
 4. 结果是已关闭的历史窗口重新变成可见行，但 Focus/Close 已没有可调用对象。
 
-长驻窗口模型保留历史对象属于外部运行时条件；ProcDeck 自身的缺陷是没有在共享输入边界上落实“可操作的 App Window”约束。
+长驻窗口模型保留历史对象属于外部运行时条件；AppDeck 自身的缺陷是没有在共享输入边界上落实“可操作的 App Window”约束。
 
 ### 2. Focus 的 API 与 overlay 时序均不成立
 
@@ -40,7 +40,7 @@
 - 没有可见 overlay 时，`Toplevel.activate()` 仍未激活目标，结果为 `activated: false`。
 - 没有 Exclusive overlay 时，Hyprland 0.56 的 Lua 地址 dispatcher 成功激活同一目标，结果为 `activated: true`。
 - 保持 Exclusive overlay 时，同一地址 dispatcher 仍无法激活目标。
-- 在真实 ProcDeck 中按 Enter 后，活动窗口保持为 ChatGPT，界面显示 `Unable to focus this app.`。
+- 在真实 AppDeck 中按 Enter 后，活动窗口保持为 ChatGPT，界面显示 `Unable to focus this app.`。
 
 因此必须把“释放 overlay 焦点”和“改用 Hyprland 精确地址调度”作为同一次状态迁移；只改其中一项仍会失败。
 
@@ -73,7 +73,7 @@ Quickshell 的 `HyprlandToplevel.address` 实际值类似 `55e1...`，不带 `0x
 ```sh
 node - <<'NODE'
 const assert = require('node:assert/strict');
-const { forceKillTargets } = require('./ProcDeckModel.js');
+const { forceKillTargets } = require('./AppDeckModel.js');
 const app = {
   identity: 'app:real',
   windows: [{ ownerIdentity: 42, hyprlandAddress: '55e1c24dd5b0' }]
@@ -116,7 +116,7 @@ snapshot、去重、确认范围、Focus 和 Force Kill 都使用同一规范化
 3. 在下一次 Qt event-loop 中通过 `Hyprland.dispatch()` 发送精确 `address:0x...` 的 Hyprland 0.56 Lua focus action。该调用仍在 shell 内部完成，不启动辅助进程。
 4. 保留激活确认；只有现场测试证明 250ms 不够时才延长 timeout。
 5. 确认成功后调用 shell hide 路径，同步宿主的 `openPanelIds`。
-6. timeout 或异常时重新打开 ProcDeck，保留原选择，恢复键盘焦点并显示 inline error。
+6. timeout 或异常时重新打开 AppDeck，保留原选择，恢复键盘焦点并显示 inline error。
 
 不能只设置 `opened = false`：否则宿主仍认为插件处于打开状态，下次快捷键会执行错误方向的 toggle。
 
@@ -151,10 +151,10 @@ snapshot、去重、确认范围、Focus 和 Force Kill 都使用同一规范化
 
 | 场景 | 预期结果 |
 | --- | --- |
-| 对比 `hyprctl clients` 与 ProcDeck | App Window 数相同，不再显示旧 WPS/WeChat 条目 |
+| 对比 `hyprctl clients` 与 AppDeck | App Window 数相同，不再显示旧 WPS/WeChat 条目 |
 | live 空 `appId` 窗口 | 仍显示为一个独立 Unidentified App |
 | Enter / Focus 按钮 | overlay 先释放，精确目标激活，宿主打开状态同步关闭 |
-| 人为制造 Focus 失败 | ProcDeck 重新出现，选择不变并显示 inline error |
+| 人为制造 Focus 失败 | AppDeck 重新出现，选择不变并显示 inline error |
 | Close 单个一次性窗口 | 仅向该窗口发送 Close Request |
 | Close 同一 Running App 的两个窗口 | 两个窗口均收到请求，不影响其他应用 |
 | 取消 Force Kill | 不执行任何破坏操作 |
@@ -166,15 +166,15 @@ snapshot、去重、确认范围、Focus 和 Force Kill 都使用同一规范化
 ```sh
 node --test
 omarchy plugin validate .
-qmlformat ProcDeck.qml
-qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml ProcDeck.qml
+qmlformat AppDeck.qml
+qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml AppDeck.qml
 git diff --check
 ```
 
 ## 预计改动范围
 
-- `ProcDeckModel.js`：地址规范化与共享的有效窗口规则。
-- `ProcDeck.qml`：snapshot 过滤/信号监听、两阶段 Focus 调度。
+- `AppDeckModel.js`：地址规范化与共享的有效窗口规则。
+- `AppDeck.qml`：snapshot 过滤/信号监听、两阶段 Focus 调度。
 - `tests/model.test.js`：贴近真实运行时格式的回归测试。
 - 只有行为文字发生变化时才更新 README/现有 issue 记录。
 
@@ -188,14 +188,14 @@ git diff --check
 - Focus 切换到精确 Selected App，且宿主 toggle 状态正确。
 - Graceful Close 向 Selected App 的每个且仅这些 App Window 发送请求，不声称应用一定接受请求。
 - Force Kill 能接受 Quickshell 的真实地址格式，保留确认，并且只结束已确认的唯一 owner。
-- 所有失败路径保持 ProcDeck 可用并显示 inline error。
+- 所有失败路径保持 AppDeck 可用并显示 inline error。
 - 实现继续符合 ADR 0001 至 0004。
 
 ## 实施与验证结果
 
-- 重启 shell 后，ProcDeck 从错误的 23 个应用/28 个窗口恢复为 8 个应用/13 个窗口，与 `hyprctl clients` 的 13 个真实客户端一致。
-- Focus：对一次性 `procdeck-focus-test` 窗口按 Enter 后，活动窗口地址精确切换到该目标，overlay 与宿主打开状态同步关闭。
+- 重启 shell 后，AppDeck 从错误的 23 个应用/28 个窗口恢复为 8 个应用/13 个窗口，与 `hyprctl clients` 的 13 个真实客户端一致。
+- Focus：对一次性 `appdeck-focus-test` 窗口按 Enter 后，活动窗口地址精确切换到该目标，overlay 与宿主打开状态同步关闭。
 - Close：通过插件方法调用和可见面板中的 Delete 两条路径，均只关闭选中的一个一次性 Foot 窗口；footer 显示 `Close Request sent to 1 window.`。
 - Force Kill：确认页显示唯一一次性应用及 1 个窗口，确认后仅该窗口消失。
 - 所有一次性测试窗口均已清理，真实客户端计数回到 13。
-- `node --test`、`qmllint`、`omarchy plugin validate .`、`git diff --check` 全部通过；最新 shell 日志无新的 ProcDeck 运行时异常。
+- `node --test`、`qmllint`、`omarchy plugin validate .`、`git diff --check` 全部通过；最新 shell 日志无新的 AppDeck 运行时异常。

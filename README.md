@@ -1,14 +1,14 @@
-# ProcDeck
+# AppDeck
 
-ProcDeck is a keyboard-first application finder, starter, switcher, and closer for
+AppDeck is a keyboard-first application finder, starter, switcher, and closer for
 Omarchy 4. It manages running GUI applications as groups of windows instead of
 exposing a raw process table.
 
-Status: ProcDeck v0.2 is implemented and verified as of 2026-09-07.
+Status: AppDeck v0.2 is implemented and verified as of 2026-09-07.
 
 ## v0.2 scope
 
-ProcDeck opens instantly and presents installed and running GUI apps in one list.
+AppDeck opens instantly and presents installed and running GUI apps in one list.
 
 Included:
 
@@ -22,7 +22,7 @@ Included:
 - Start a selected launchable app through Omarchy's shared application library.
 - Window count and workspace list for every application.
 - Most-recently-used ordering, with the active application first.
-- The previous application initially selected, so opening ProcDeck and pressing
+- The previous application initially selected, so opening AppDeck and pressing
   Enter switches back immediately.
 - Focus the most recently used window in the selected application.
 - Gracefully close every window in the selected application.
@@ -55,11 +55,11 @@ metrics only after a measured need and a documented grouping policy.
 | `Enter` or row click | Focus a Running App or Start Running a Launchable App |
 | `Delete` | Gracefully close all windows in the selected Running App |
 | `Shift + Delete` | Open the selected Running App's Kill confirmation |
-| `Escape` | Clear a non-empty search; otherwise close ProcDeck |
+| `Escape` | Clear a non-empty search; otherwise close AppDeck |
 
 The Kill confirmation names the application and window count. `Enter`
 confirms; `Escape` cancels and returns focus to the list. A failed action must
-leave the overlay usable and show a short inline footer error. ProcDeck never
+leave the overlay usable and show a short inline footer error. AppDeck never
 requests elevated privileges.
 
 When an installed application gains or loses its last app window, its row stays
@@ -69,7 +69,7 @@ overlay.
 
 ## UI contract
 
-The [interactive v0.1 mockup](docs/mockups/procdeck-v01.html) remains a baseline
+The [interactive v0.1 mockup](docs/mockups/appdeck-v01.html) remains a baseline
 for the responsive layout; it does not include launchable search results.
 
 The overlay reuses Omarchy's shared `Color`, `Style`, `BorderSurface`, and
@@ -86,11 +86,11 @@ The application list fills the available body height and the detail area grows
 only to fit its content. A Running App shows Focus, Close, and Kill; a Launchable
 App shows only Start Running. At narrow widths, the action group wraps below its
 scope label. The selected row uses the shell's existing selected-state colours;
-Kill alone uses the urgent colour. ProcDeck owns no theme palette.
+Kill alone uses the urgent colour. AppDeck owns no theme palette.
 
 ## Data and action model
 
-ProcDeck uses the native objects already maintained by the long-running shell:
+AppDeck uses the native objects already maintained by the long-running shell:
 
 ```text
 Hyprland.toplevels
@@ -117,7 +117,7 @@ Actions stay within APIs supplied by Hyprland, Quickshell, and the Omarchy shell
 - Start Running delegates the selected desktop entry to Omarchy's shared application
   library, falling back to `DesktopEntry.execute()` when the service is absent.
 
-If `appId` is empty and the window has no identified parent, ProcDeck keeps that
+If `appId` is empty and the window has no identified parent, AppDeck keeps that
 window as its own group. It must not merge unrelated unknown windows just
 because their titles happen to match. The overlay itself is a layer surface,
 not a toplevel, so it is naturally excluded from the list.
@@ -128,7 +128,7 @@ never changes application identity.
 
 ## Plugin contract
 
-The plugin id is `procdeck.app`. It is an `overlay` with `keepLoaded: true` so
+The plugin id is `appdeck.app`. It is an `overlay` with `keepLoaded: true` so
 opening is warm and the in-memory MRU order can be maintained for the whole
 shell session. The entry component exposes `open(payloadJson)`, `close()`, and
 `toggle()` for the Omarchy shell host.
@@ -136,10 +136,10 @@ shell session. The entry component exposes `open(payloadJson)`, `close()`, and
 The smallest complete repository is:
 
 ```text
-ProcDeck/
+AppDeck/
 ├── manifest.json          # Omarchy schema v1; overlay entry point
-├── ProcDeck.qml           # Window, keyboard flow, and actions
-├── ProcDeckModel.js       # Pure grouping, search, and sorting logic
+├── AppDeck.qml           # Window, keyboard flow, and actions
+├── AppDeckModel.js       # Pure grouping, search, and sorting logic
 ├── tests/
 │   └── model.test.js      # One dependency-free Node self-check
 ├── README.md
@@ -163,13 +163,13 @@ The intended manifest is:
 ```json
 {
   "schemaVersion": 1,
-  "id": "procdeck.app",
-  "name": "ProcDeck",
+  "id": "appdeck.app",
+  "name": "AppDeck",
   "version": "0.2.0",
   "description": "Find, start, focus, close, or force-kill GUI applications",
   "kinds": ["overlay"],
   "keepLoaded": true,
-  "entryPoints": { "overlay": "ProcDeck.qml" }
+  "entryPoints": { "overlay": "AppDeck.qml" }
 }
 ```
 
@@ -178,8 +178,8 @@ The user-owned shortcut is deliberately separate from plugin installation:
 ```lua
 o.bind(
   "ALT + SPACE",
-  "ProcDeck",
-  "omarchy-shell shell toggle procdeck.app"
+  "AppDeck",
+  "omarchy-shell shell toggle appdeck.app"
 )
 ```
 
@@ -192,7 +192,7 @@ Omarchy 4.0.2 has no command for linking an individual plugin. During local
 development, link this checkout into the user plugin directory:
 
 ```bash
-ln -s /home/zjh/Projects/ProcDeck ~/.config/omarchy/plugins/procdeck.app
+ln -s /home/zjh/Projects/AppDeck ~/.config/omarchy/plugins/appdeck.app
 ```
 
 The shell discovers a linked plugin, but recursive file watching does not
@@ -200,13 +200,13 @@ follow the linked directory. Validate the real checkout and explicitly rescan
 after changes:
 
 ```bash
-cd /home/zjh/Projects/ProcDeck
+cd /home/zjh/Projects/AppDeck
 omarchy plugin validate .
 omarchy-shell shell rescanPlugins
-omarchy-shell shell toggle procdeck.app
+omarchy-shell shell toggle appdeck.app
 ```
 
-Enable it once with `omarchy plugin enable procdeck.app`. These user-config
+Enable it once with `omarchy plugin enable appdeck.app`. These user-config
 changes are performed only after separate approval.
 
 ## Repository verification

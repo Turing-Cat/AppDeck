@@ -6,7 +6,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
-import "ProcDeckModel.js" as ProcDeckModel
+import "AppDeckModel.js" as AppDeckModel
 
 Item {
   id: root
@@ -71,7 +71,7 @@ Item {
     for (var i = 0; i < values.length; i++) {
       var hyprlandToplevel = values[i]
       var waylandToplevel = hyprlandToplevel.wayland
-      var address = ProcDeckModel.normalizedHyprlandAddress(
+      var address = AppDeckModel.normalizedHyprlandAddress(
         hyprlandToplevel.address)
       if (!waylandToplevel || !address || seenAddresses[address]) continue
       seenAddresses[address] = true
@@ -108,20 +108,20 @@ Item {
   }
 
   function desktopEntry(entryId) {
-    var normalizedId = ProcDeckModel.normalizedDesktopEntryId(entryId)
+    var normalizedId = AppDeckModel.normalizedDesktopEntryId(entryId)
     var entries = root.desktopEntries()
     for (var i = 0; i < entries.length; i++) {
-      if (ProcDeckModel.normalizedDesktopEntryId(entries[i].id) === normalizedId)
+      if (AppDeckModel.normalizedDesktopEntryId(entries[i].id) === normalizedId)
         return entries[i]
     }
     return null
   }
 
   function updateSearchResults(previousSelection, previousIndex, preserveSelection) {
-    root.apps = ProcDeckModel.searchResults(
+    root.apps = AppDeckModel.searchResults(
       root.allApps, root.desktopEntries(), root.searchQuery)
     root.selectedIdentity = preserveSelection
-      ? ProcDeckModel.reconcileSelectedIdentity(previousSelection, previousIndex, root.apps)
+      ? AppDeckModel.reconcileSelectedIdentity(previousSelection, previousIndex, root.apps)
       : root.apps.length ? root.apps[0].identity : ""
     root.revealSelected()
   }
@@ -129,10 +129,10 @@ Item {
   function rebuild() {
     var previousSelection = root.selectedApp
     var previousIndex = root.selectedIndex
-    var groupedApps = ProcDeckModel.runningApps(root.snapshots(), function(appId) {
+    var groupedApps = AppDeckModel.runningApps(root.snapshots(), function(appId) {
       return DesktopEntries.heuristicLookup(appId)
     })
-    var nextApps = ProcDeckModel.orderRunningApps(groupedApps, root.activityOrderIdentities)
+    var nextApps = AppDeckModel.orderRunningApps(groupedApps, root.activityOrderIdentities)
 
     root.activityOrderIdentities = nextApps.map(function(app) { return app.identity })
     root.allApps = nextApps
@@ -150,7 +150,7 @@ Item {
     root.searchQuery = ""
     root.footerMessage = ""
     root.rebuild()
-    root.selectedIdentity = ProcDeckModel.initialSelectedIdentity(root.apps)
+    root.selectedIdentity = AppDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
     Qt.callLater(function() {
       keyCatcher.forceActiveFocus()
@@ -185,7 +185,7 @@ Item {
   function selectPage(direction) {
     var rowExtent = root.rowHeight + appList.spacing
     var pageSize = Math.max(1, Math.floor((appList.height + appList.spacing) / rowExtent))
-    root.selectAbsolute(ProcDeckModel.pageSelectionIndex(
+    root.selectAbsolute(AppDeckModel.pageSelectionIndex(
       root.selectedIndex, root.apps.length, pageSize, direction))
   }
 
@@ -203,8 +203,8 @@ Item {
   function focusApp(app) {
     root.clearPendingFocus()
     root.footerMessage = ""
-    var target = ProcDeckModel.mostRecentlyActiveAppWindow(app)
-    var command = ProcDeckModel.focusCommand(target)
+    var target = AppDeckModel.mostRecentlyActiveAppWindow(app)
+    var command = AppDeckModel.focusCommand(target)
     if (!target || !target.handle || !command) {
       root.reportFocusError()
       return
@@ -242,7 +242,7 @@ Item {
 
     var entryId = selected.desktopEntryId
     root.rebuild()
-    var runningApp = ProcDeckModel.runningAppForDesktopEntry(root.allApps, entryId)
+    var runningApp = AppDeckModel.runningAppForDesktopEntry(root.allApps, entryId)
     if (runningApp) {
       root.selectedIdentity = runningApp.identity
       root.focusApp(runningApp)
@@ -256,7 +256,7 @@ Item {
       return
     }
 
-    root.pendingLaunchIdentity = "launch:" + ProcDeckModel.normalizedDesktopEntryId(entryId)
+    root.pendingLaunchIdentity = "launch:" + AppDeckModel.normalizedDesktopEntryId(entryId)
     root.opened = false
     Qt.callLater(function() {
       if (!root.pendingLaunchIdentity) return
@@ -282,7 +282,7 @@ Item {
     root.clearPendingFocus()
     root.footerMessage = ""
     if (!root.selectedApp || root.selectedApp.kind !== "running") return
-    var targets = ProcDeckModel.gracefulCloseTargets(root.selectedApp)
+    var targets = AppDeckModel.gracefulCloseTargets(root.selectedApp)
     var failures = 0
 
     for (var i = 0; i < targets.length; i++) {
@@ -323,7 +323,7 @@ Item {
       identity: root.selectedApp.identity,
       name: root.selectedApp.name,
       windowCount: root.selectedApp.windows.length,
-      forceKillScope: ProcDeckModel.forceKillScope(root.selectedApp)
+      forceKillScope: AppDeckModel.forceKillScope(root.selectedApp)
     }
     forceKillConfirm.selectedIndex = 1
     root.restoreListFocus()
@@ -343,20 +343,20 @@ Item {
         }
       }
     }
-    var targets = ProcDeckModel.forceKillTargets(
+    var targets = AppDeckModel.forceKillTargets(
       currentApp || pendingApp, confirmed, root.allApps)
     if (!confirmed) {
       root.restoreListFocus()
       return
     }
     if (!currentApp || currentApp.windowCount !== pendingApp.windowCount
-        || !ProcDeckModel.forceKillScopeMatches(
+        || !AppDeckModel.forceKillScopeMatches(
           currentApp, pendingApp.forceKillScope)) {
       root.footerMessage = "Kill target changed. Review it again."
       root.restoreListFocus()
       return
     }
-    if (!ProcDeckModel.forceKillScopeIsExclusive(currentApp, root.allApps)) {
+    if (!AppDeckModel.forceKillScopeIsExclusive(currentApp, root.allApps)) {
       root.footerMessage = "Kill target is shared with another Running App."
       root.restoreListFocus()
       return
@@ -426,7 +426,7 @@ Item {
     root.clearForceKillConfirmation()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "procdeck.app")
+      root.shell.hide((root.manifest && root.manifest.id) || "appdeck.app")
   }
 
   function toggle() {
@@ -492,7 +492,7 @@ Item {
 
       function acceptResponse(chunk, ended) {
         if (finished) return
-        var state = ProcDeckModel.forceKillResponseState(
+        var state = AppDeckModel.forceKillResponseState(
           responseBuffer, chunk, ended)
         responseBuffer = state.response
         if (state.done) finish(state.succeeded)
@@ -555,7 +555,7 @@ Item {
     anchors { top: true; right: true; bottom: true; left: true }
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "procdeck"
+    WlrLayershell.namespace: "appdeck"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.opened
       ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None

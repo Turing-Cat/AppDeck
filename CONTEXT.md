@@ -1,11 +1,11 @@
-# ProcDeck
+# AppDeck
 
-ProcDeck provides a shared language for finding and managing graphical
+AppDeck provides a shared language for finding and managing graphical
 applications across an Omarchy desktop.
 
 ## Language
 
-**ProcDeck**:
+**AppDeck**:
 A keyboard-first, desktop-wide application finder that opens installed apps,
 switches to running apps, and can close or forcibly end them.
 _Avoid_: Process manager, task manager
@@ -30,13 +30,13 @@ The running app that owns the currently focused app window.
 _Avoid_: Focused row
 
 **Selected App**:
-The running or launchable app currently targeted by its available ProcDeck
+The running or launchable app currently targeted by its available AppDeck
 action. A selected running app may differ from the active app.
 _Avoid_: Active app
 
 **Previous App**:
 The most recently active running app other than the active app. It is the
-initial selection when ProcDeck opens.
+initial selection when AppDeck opens.
 _Avoid_: Last app
 
 **Unidentified App**:

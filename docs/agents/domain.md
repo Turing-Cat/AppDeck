@@ -1,6 +1,6 @@
 # Domain Docs
 
-ProcDeck uses a single-context domain-documentation layout.
+AppDeck uses a single-context domain-documentation layout.
 
 ## Before exploring
 
