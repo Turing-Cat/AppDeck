@@ -1,7 +1,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Hyprland
 import InputTest 1.0
 
 ShellRoot {
@@ -52,6 +51,56 @@ ShellRoot {
     function close() { test.closes++ }
   }
 
+  QtObject {
+    id: desktop
+    signal changed()
+    property var rows: []
+    property var metadata: ({})
+    property var focusedIds: []
+    property bool acknowledgeFocus: false
+    property bool throwFocus: false
+    property bool killAvailable: true
+    property bool succeedKill: true
+    property bool holdKill: false
+    property var deliveries: []
+    property Component killRequest: Component {
+      QtObject {
+        required property string command
+        signal completed(bool succeeded)
+        function start() {
+          desktop.deliveries = desktop.deliveries.concat([this])
+          if (!desktop.holdKill) completed(desktop.succeedKill)
+        }
+      }
+    }
+    function snapshots() { return rows }
+    function lookupApp(id) { return metadata[id] || null }
+    function refresh() {}
+    function focusWindow(window) {
+      focusedIds = focusedIds.concat([window.id])
+      if (throwFocus) throw new Error("fixture dispatch failure")
+      if (acknowledgeFocus) window.handle.activated = true
+    }
+  }
+
+  // Publish desktop observations; the production model does grouping,
+  // ordering, search and stable selection, just as it does for Hyprland.
+  function publishApps(apps) {
+    var rows = []
+    var metadata = ({})
+    for (var a = 0; a < apps.length; a++) {
+      var app = apps[a]
+      var id = app.identity.slice(4)
+      metadata[id] = { id: id, name: app.name, icon: app.icon }
+      for (var w = 0; w < app.windows.length; w++)
+        rows.push(Object.assign({}, app.windows[w], { appId: id }))
+    }
+    desktop.metadata = metadata
+    desktop.rows = rows
+    desktop.changed()
+    test.app.rebuild()
+  }
+
   function check(condition, message) {
     if (!condition) throw new Error(message)
   }
@@ -70,20 +119,20 @@ ShellRoot {
   }
 
   function setRunningFixture() {
-    test.app.allApps = [{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
+    publishApps([{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
       name: "AppDeck Test", icon: "", windowCount: 1, workspaces: ["1"], currentTitle: "Fixture",
       windows: [{ id: "fixture", title: "Fixture", workspace: "1", handle: fixtureWindow,
-        ownerIdentity: 2147483647, hyprlandAddress: "ffffffffffffffff" }] }]
+        ownerIdentity: 2147483647, hyprlandAddress: "ffffffffffffffff" }] }])
   }
 
   function setMultiWindowFixture() {
-    test.app.allApps = [{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
+    publishApps([{ kind: "running", identity: "app:appdeck-test", appId: "AppDeck Test",
       name: "AppDeck Test", icon: "", windowCount: 3, workspaces: ["1", "2", "3"], currentTitle: "Second",
       windows: [
         { id: "first", title: "First", workspace: "1", handle: fixtureWindow, focusHistoryId: 2, hyprlandAddress: "fffffffffffffff1" },
         { id: "second", title: "Second", workspace: "2", handle: secondWindow, focusHistoryId: 0, hyprlandAddress: "fffffffffffffff2" },
         { id: "third", title: "Third", workspace: "3", handle: thirdWindow, focusHistoryId: 1, hyprlandAddress: "fffffffffffffff3" }
-      ] }]
+      ] }])
     test.app.setSearchQuery("AppDeck Test")
   }
 
@@ -99,7 +148,7 @@ ShellRoot {
       test.finish(1)
       return
     }
-    test.app = component.createObject(test)
+    test.app = component.createObject(test, { desktop: desktop })
     if (!test.app) { test.finish(1); return }
     // Synthetic events go through the real window, without grabbing the
     // desktop keyboard or accepting keystrokes from the person running it.
@@ -110,13 +159,6 @@ ShellRoot {
     }
     test.app.shell = fixtureShell
     test.app.open("{}")
-    // Desktop fixtures must not be replaced by unrelated user desktop events.
-    // Only this test process's external event sources are muted; dispatches,
-    // input handling, live selection reconciliation and failure recovery run.
-    input.suppressEvents(Hyprland)
-    input.suppressEvents(Hyprland.toplevels)
-    for (var t = 0; t < Hyprland.toplevels.values.length; t++)
-      input.suppressEvents(Hyprland.toplevels.values[t])
     test.steps = [
       function chineseCommit() {
         check(input.focus(), "AppDeck has no focused input receiver")
@@ -314,10 +356,10 @@ ShellRoot {
           original.windows[0], original.windows[1],
           { id: "new", title: "New", workspace: "4", handle: fixtureWindow, hyprlandAddress: "fffffffffffffff4" }
         ], windowCount: 4 })
-        test.app.apps = [updated]
+        publishApps([updated])
         check(test.app.selectedWindowId === "third" && test.app.selectedWindow.workspace === "9",
           "desktop update lost the selected window")
-        test.app.apps = [Object.assign({}, updated, { windows: updated.windows.slice(1), windowCount: 3 })]
+        publishApps([Object.assign({}, updated, { windows: updated.windows.slice(1), windowCount: 3 })])
         check(!test.app.selectedWindowId && test.app.opened, "removed window did not clear selection")
         check(test.app.footerMessage.indexOf("no longer available") >= 0, "removed window has no error message")
         check(!test.app.pendingFocusHandle, "removed window silently requested another target")
@@ -330,9 +372,9 @@ ShellRoot {
         check(test.app.selectedWindowId === "fixture", "single window cycling failed")
         setMultiWindowFixture()
         var app = test.app.selectedApp
-        test.app.apps = [Object.assign({}, app, { windows: app.windows.map(function(w) {
+        publishApps([Object.assign({}, app, { windows: app.windows.map(function(w) {
           return Object.assign({}, w, { focusHistoryId: null })
-        }) })]
+        }) })])
         input.key(Qt.Key_Tab)
         check(test.app.selectedWindowId === "first", "unknown recent window did not fall back to first")
         input.key(Qt.Key_Escape)
@@ -393,7 +435,7 @@ ShellRoot {
         input.key(Qt.Key_Return)
         check(test.app.pendingFocusHandle === secondWindow, "explicit target was not requested")
         var app = test.app.selectedApp
-        test.app.apps = [Object.assign({}, app, { windows: [app.windows[0], app.windows[2]], windowCount: 2 })]
+        publishApps([Object.assign({}, app, { windows: [app.windows[0], app.windows[2]], windowCount: 2 })])
         check(!test.app.pendingFocusHandle && test.app.opened && !test.app.selectedWindowId,
           "target removed before dispatch did not cancel and restore")
       },
@@ -402,9 +444,9 @@ ShellRoot {
         var app = test.app.selectedApp
         var windows = []
         for (var i = 0; i < 14; i++) windows.push(Object.assign({}, app.windows[0], {
-          id: "long-" + i, title: "Long window " + i, focusHistoryId: i
+          hyprlandAddress: (4096 + i).toString(16), id: "long-" + i, title: "Long window " + i, focusHistoryId: i
         }))
-        test.app.apps = [Object.assign({}, app, { windows: windows, windowCount: windows.length })]
+        publishApps([Object.assign({}, app, { windows: windows, windowCount: windows.length })])
         input.key(Qt.Key_Tab)
         input.key(Qt.Key_Backtab, Qt.ShiftModifier)
         check(test.app.selectedWindowId === "long-13", "reverse cycling did not select last window")
@@ -414,9 +456,9 @@ ShellRoot {
         check(row && row.selected, "selected row was not created or highlighted after scrolling")
         check(row.mapToItem(null, 0, 0).y > 0, "selected row remained above viewport")
         var app = test.app.selectedApp
-        test.app.apps = [Object.assign({}, app, { windows: app.windows.map(function(w) {
+        publishApps([Object.assign({}, app, { windows: app.windows.map(function(w) {
           return Object.assign({}, w, { title: "Updated " + w.title })
-        }) })]
+        }) })])
         check(test.app.selectedWindowId === "long-13", "title refresh lost scrolled selection")
         input.key(Qt.Key_Home)
         check(!test.app.selectedWindowId && test.app.selectedIndex === 0, "Home did not exit window selection")
@@ -429,7 +471,146 @@ ShellRoot {
         test.app.close()
         test.app.open("{}")
         check(!test.app.selectedWindowId, "reopen retained explicit window selection")
+      },
+      function successfulFocus() {
+        setMultiWindowFixture()
+        desktop.acknowledgeFocus = true
+        desktop.focusedIds = []
+        input.key(Qt.Key_Tab)
+        input.key(Qt.Key_Return)
+        check(!test.app.opened && test.app.pendingFocusHandle === secondWindow,
+          "focus did not hide the panel and retain the exact pending handle")
+      },
+      function acknowledgedFocus() {
+        check(!test.app.opened && !test.app.pendingFocusHandle, "focus acknowledgement did not finish")
+        check(desktop.focusedIds.join() === "second", "focus dispatched the wrong window")
+        desktop.acknowledgeFocus = false
+        secondWindow.activated = false
+        test.app.open("{}")
+        desktop.focusedIds = []
+        setMultiWindowFixture()
+        test.app.focusSelectedApp()
+        test.app.close()
+      },
+      function cancelledFocus() {
+        check(desktop.focusedIds.length === 0, "cancelled deferred focus still dispatched")
+        test.app.open("{}")
+        setMultiWindowFixture()
+        desktop.focusedIds = []
+        desktop.acknowledgeFocus = true
+        test.app.focusWindow(test.app.selectedApp.windows[0])
+        test.app.focusWindow(test.app.selectedApp.windows[2])
+      },
+      function replacedFocus() {
+        check(desktop.focusedIds.join() === "third", "replaced focus dispatched stale work")
+        check(!test.app.pendingFocusHandle && !test.app.opened, "replacement focus failed to complete")
+        thirdWindow.activated = false
+        desktop.acknowledgeFocus = false
+        test.app.open("{}")
+        setMultiWindowFixture()
+        desktop.throwFocus = true
+        test.app.focusSelectedApp()
+      },
+      function thrownFocus() {
+        check(test.app.opened && !test.app.pendingFocusHandle, "dispatch exception did not restore the panel")
+        check(test.app.footerMessage === "Unable to focus this app.", "dispatch exception lost error message")
+        desktop.throwFocus = false
+        setRunningFixture()
+        test.app.setSearchQuery("AppDeck Test")
+        desktop.deliveries = []
+        test.app.requestForceKill()
+        test.app.completeForceKill(true)
+        check(desktop.deliveries.length === 1, "confirmed Kill did not deliver exactly one owner request")
+        check(desktop.deliveries[0].command.indexOf("0xffffffffffffffff") >= 0,
+          "Kill delivery lost the exact desktop address")
+      },
+      function successfulKill() {
+        check(test.app.forceKillRequests.length === 0, "Kill batch did not finish")
+        check(test.app.footerMessage === "Kill requested for 1 owner.", "Kill success message differs")
+        desktop.deliveries = []
+        test.app.requestForceKill()
+        desktop.rows = desktop.rows.map(function(w) { return Object.assign({}, w, { ownerIdentity: 123 }) })
+        test.app.completeForceKill(true)
+        check(desktop.deliveries.length === 0 && test.app.footerMessage.indexOf("target changed") >= 0,
+          "changed owner escaped confirmation revalidation")
+        setRunningFixture()
+        test.app.setSearchQuery("AppDeck Test")
+        test.app.requestForceKill()
+        test.app.completeForceKill(false)
+        check(desktop.deliveries.length === 0, "cancelled Kill delivered a command")
+      },
+      function sharedKillOwner() {
+        setRunningFixture()
+        test.app.setSearchQuery("AppDeck Test")
+        test.app.requestForceKill()
+        desktop.rows = desktop.rows.concat([Object.assign({}, desktop.rows[0], {
+          id: "other", appId: "other-app", hyprlandAddress: "eeeeeeeeeeeeeeee"
+        })])
+        test.app.completeForceKill(true)
+        check(desktop.deliveries.length === 0 && test.app.footerMessage.indexOf("shared") >= 0,
+          "Kill targeted an owner shared with another Running App")
+        setRunningFixture()
+        test.app.setSearchQuery("AppDeck Test")
+        desktop.killAvailable = false
+        test.app.requestForceKill()
+        test.app.completeForceKill(true)
+        check(desktop.deliveries.length === 0 && test.app.footerMessage === "Unable to send Kill request.",
+          "unavailable transport was used")
+        desktop.killAvailable = true
+      },
+      function failedKill() {
+        desktop.succeedKill = false
+        test.app.requestForceKill()
+        test.app.completeForceKill(true)
+      },
+      function failedKillResponse() {
+        check(test.app.forceKillRequests.length === 0 && test.app.footerMessage === "Unable to send Kill request.",
+          "failed Kill did not finish with its failure message")
+        setMultiWindowFixture()
+        desktop.rows = desktop.rows.map(function(w, i) { return Object.assign({}, w, { ownerIdentity: 100 + i }) })
+        test.app.rebuild()
+        desktop.deliveries = []
+        desktop.holdKill = true
+        test.app.requestForceKill()
+        test.app.completeForceKill(true)
+        check(desktop.deliveries.length === 3, "multi-owner Kill did not dispatch all owners")
+        test.app.requestForceKill()
+        check(test.app.footerMessage === "A Kill request is still pending.", "pending Kill was not guarded")
+        desktop.deliveries[2].completed(true)
+        desktop.deliveries[2].completed(true)
+        desktop.deliveries[0].completed(false)
+      },
+      function partialKillResponse() {
+        check(test.app.forceKillRequests.length === 3, "batch completed before every owner responded")
+        desktop.deliveries[1].completed(true)
+      },
+      function completedPartialKill() {
+        check(test.app.forceKillRequests.length === 0
+          && test.app.footerMessage === "Some Kill requests could not be sent.",
+          "duplicate or out-of-order responses corrupted Kill aggregation")
+        desktop.holdKill = false
+        desktop.succeedKill = true
+        // Exercise the actual socket response parser without opening a socket.
+        var component = Qt.createComponent("file://" + Quickshell.env("APPDECK_TEST_REPO") + "/AppDeckKillRequest.qml")
+        check(component.status === Component.Ready, component.errorString())
+        var request = component.createObject(test, { command: "unused", path: "" })
+        check(request, "could not create native Kill response reader")
+        var responses = []
+        request.completed.connect(function(ok) { responses.push(ok) })
+        request.acceptResponse("o", false)
+        check(responses.length === 0, "partial socket response completed early")
+        request.acceptResponse("k\n", false)
+        request.acceptResponse("error", true)
+        check(responses.length === 1 && responses[0], "fragmented acknowledgement or duplicate completion failed")
+        request.destroy()
+        var failed = component.createObject(test, { command: "unused", path: "" })
+        var failures = []
+        failed.completed.connect(function(ok) { failures.push(ok) })
+        failed.acceptResponse("error", true)
+        check(failures.length === 1 && !failures[0], "socket disconnect did not fail the request")
+        failed.destroy()
       }
+
     ]
     run.start()
   }

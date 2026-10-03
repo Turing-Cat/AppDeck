@@ -1,9 +1,5 @@
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
-import Quickshell.Hyprland
-import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "AppDeckModel.js" as AppDeckModel
@@ -14,20 +10,58 @@ Item {
   property var shell: null
   property var manifest: null
   property bool opened: false
-  property var allApps: []
-  property var apps: []
-  property var activityOrderIdentities: []
-  property string searchQuery: ""
-  property string selectedIdentity: ""
-  property string selectedWindowAppIdentity: ""
-  property string selectedWindowId: ""
+  readonly property var allApps: selection.allApps
+  readonly property var apps: selection.apps
+  readonly property string searchQuery: selection.searchQuery
+  property alias selectedIdentity: selection.selectedIdentity
+  readonly property string selectedWindowId: selection.selectedWindowId
   property string footerMessage: ""
-  property var pendingFocusHandle: null
+  readonly property var pendingFocusHandle: focusController.pendingFocusHandle
   property string pendingLaunchIdentity: ""
-  property var pendingForceKillApp: null
-  property var forceKillRequests: []
-  property int forceKillResponseCount: 0
-  property int forceKillFailureCount: 0
+  readonly property var pendingForceKillApp: killController.pendingForceKillApp
+  readonly property var forceKillRequests: killController.forceKillRequests
+
+  property var desktop: nativeDesktop.item
+  Loader {
+    id: nativeDesktop
+    active: !root.desktop || root.desktop === item
+    source: "AppDeckDesktop.qml"
+  }
+  Connections {
+    target: root.desktop
+    function onChanged() { root.scheduleRebuild() }
+  }
+  AppDeckSelection {
+    id: selection
+    entries: root.desktopEntries()
+    onResultsChanged: root.revealSelected()
+    onWindowChosen: root.revealSelectedWindow()
+    onWindowUnavailable: {
+      if (root.pendingFocusHandle) {
+        root.opened = true
+        root.restoreListFocus()
+      }
+      root.clearPendingFocus()
+      root.footerMessage = "Selected window is no longer available. Select again."
+    }
+  }
+  AppDeckFocus {
+    id: focusController
+    desktop: root.desktop
+    selection: selection
+    onStarted: root.opened = false
+    onSucceeded: root.dismiss()
+    onFailed: root.reportFocusError()
+  }
+
+  AppDeckKill {
+    id: killController
+    desktop: root.desktop
+    selection: selection
+    refresh: function() { root.rebuild() }
+    onMessageChanged: root.footerMessage = message
+    onSettled: root.restoreListFocus()
+  }
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -39,20 +73,12 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   readonly property int rowHeight: Style.space(64)
-  readonly property bool compactActions: detailCard.width < Style.space(440)
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
   readonly property bool hasSearchQuery: root.searchQuery.trim().length > 0
-  readonly property int selectedIndex: {
-    for (var i = 0; i < apps.length; i++)
-      if (apps[i].identity === selectedIdentity) return i
-    return -1
-  }
-  readonly property var selectedApp: selectedIndex >= 0 && selectedIndex < apps.length
-    ? apps[selectedIndex] : null
-  readonly property bool windowSelectionActive: selectedWindowId !== ""
-    && selectedWindowAppIdentity === selectedIdentity
-  readonly property var selectedWindow: windowSelectionActive
-    ? root.windowById(selectedWindowId) : null
+  readonly property int selectedIndex: selection.selectedIndex
+  readonly property var selectedApp: selection.selectedApp
+  readonly property bool windowSelectionActive: selection.windowSelectionActive
+  readonly property var selectedWindow: selection.selectedWindow
   readonly property int totalWindows: {
     var total = 0
     for (var i = 0; i < allApps.length; i++) total += allApps[i].windowCount
@@ -67,42 +93,6 @@ Item {
     if (value.charAt(0) === "/") return Util.fileUrl(value)
     var source = Quickshell.iconPath(value || "application-x-executable", true)
     return source || Quickshell.iconPath("application-x-executable", true)
-  }
-
-  function snapshots() {
-    var values = Hyprland.toplevels.values || []
-    var out = []
-    var seenAddresses = ({})
-
-    for (var i = 0; i < values.length; i++) {
-      var hyprlandToplevel = values[i]
-      var waylandToplevel = hyprlandToplevel.wayland
-      var address = AppDeckModel.normalizedHyprlandAddress(
-        hyprlandToplevel.address)
-      if (!waylandToplevel || !address || seenAddresses[address]) continue
-      seenAddresses[address] = true
-
-      var ipc = hyprlandToplevel.lastIpcObject || {}
-      var workspace = hyprlandToplevel.workspace
-      var workspaceId = workspace ? workspace.id : ""
-      var workspaceName = workspace ? String(workspace.name || "").trim() : ""
-
-      out.push({
-        id: address || String(i),
-        handle: waylandToplevel,
-        parent: waylandToplevel ? waylandToplevel.parent : null,
-        ownerIdentity: ipc.pid,
-        hyprlandAddress: address,
-        appId: String((waylandToplevel && waylandToplevel.appId) || ""),
-        title: String((waylandToplevel && waylandToplevel.title) || hyprlandToplevel.title || ipc.title || ""),
-        workspace: workspaceName || (workspaceId ? String(workspaceId) : ""),
-        focusHistoryId: ipc.focusHistoryID,
-        activated: hyprlandToplevel.activated === true
-          || (waylandToplevel && waylandToplevel.activated === true)
-      })
-    }
-
-    return out
   }
 
   function desktopEntries() {
@@ -123,65 +113,16 @@ Item {
     return null
   }
 
-  function updateSearchResults(previousSelection, previousIndex, preserveSelection) {
-    root.apps = AppDeckModel.searchResults(
-      root.allApps, root.desktopEntries(), root.searchQuery)
-    root.selectedIdentity = preserveSelection
-      ? AppDeckModel.reconcileSelectedIdentity(previousSelection, previousIndex, root.apps)
-      : root.apps.length ? root.apps[0].identity : ""
-    root.revealSelected()
-  }
-
-  onSelectedIdentityChanged: root.clearWindowSelection()
-  onAppsChanged: root.reconcileWindowSelection()
-
   function clearWindowSelection() {
-    root.selectedWindowId = ""
-    root.selectedWindowAppIdentity = ""
+    return selection.clearWindowSelection()
   }
 
-  function windowById(id) {
-    var app = null
-    for (var a = 0; a < root.apps.length; a++)
-      if (root.apps[a].identity === root.selectedIdentity) app = root.apps[a]
-    if (!app || app.kind !== "running") return null
-    for (var i = 0; i < app.windows.length; i++)
-      if (app.windows[i].id === id) return app.windows[i]
-    return null
-  }
-
-  function reconcileWindowSelection() {
-    if (!root.windowSelectionActive) return
-    if (!root.windowById(root.selectedWindowId)) {
-      if (root.pendingFocusHandle) {
-        root.opened = true
-        root.restoreListFocus()
-      }
-      root.clearWindowSelection()
-      root.clearPendingFocus()
-      root.footerMessage = "Selected window is no longer available. Select again."
-    } else root.revealSelectedWindow()
-  }
+  function chooseWindow(id) { selection.chooseWindow(id) }
 
   function selectWindow(delta) {
-    var app = root.selectedApp
-    if (!app || app.kind !== "running" || !app.windows.length) return
-    var index = -1
-    if (root.windowSelectionActive) {
-      for (var i = 0; i < app.windows.length; i++)
-        if (app.windows[i].id === root.selectedWindowId) index = i
-    }
-    if (index < 0) {
-      var recent = AppDeckModel.mostRecentlyActiveAppWindow(app)
-      index = 0
-      for (var j = 0; recent && j < app.windows.length; j++)
-        if (app.windows[j].id === recent.id) index = j
-    } else index = (index + delta + app.windows.length) % app.windows.length
     root.clearPendingFocus()
     root.footerMessage = ""
-    root.selectedWindowAppIdentity = app.identity
-    root.selectedWindowId = app.windows[index].id
-    root.revealSelectedWindow()
+    selection.selectWindow(delta)
   }
 
   function revealSelectedWindow() {
@@ -189,7 +130,7 @@ Item {
       if (!root.windowSelectionActive || !root.selectedApp) return
       for (var i = 0; i < root.selectedApp.windows.length; i++) {
         if (root.selectedApp.windows[i].id === root.selectedWindowId) {
-          windowList.positionViewAtIndex(i, ListView.Contain)
+          view.revealWindow(i)
           return
         }
       }
@@ -197,16 +138,9 @@ Item {
   }
 
   function rebuild() {
-    var previousSelection = root.selectedApp
-    var previousIndex = root.selectedIndex
-    var groupedApps = AppDeckModel.runningApps(root.snapshots(), function(appId) {
-      return DesktopEntries.heuristicLookup(appId)
+    selection.rebuild(desktop.snapshots(), function(appId) {
+      return desktop.lookupApp(appId)
     })
-    var nextApps = AppDeckModel.orderRunningApps(groupedApps, root.activityOrderIdentities)
-
-    root.activityOrderIdentities = nextApps.map(function(app) { return app.identity })
-    root.allApps = nextApps
-    root.updateSearchResults(previousSelection, previousIndex, true)
   }
 
   function scheduleRebuild() {
@@ -215,10 +149,10 @@ Item {
 
   function handleKey(event) {
     // Fcitx can leave a cursor attribute after cancelling an empty preedit.
-    if (searchInput.inputMethodComposing && searchInput.preeditText.length) return
+    if (view.composing) return
 
     if (root.pendingForceKillApp) {
-      if (forceKillConfirm.handleKey(event)) event.accepted = true
+      if (view.handleConfirmation(event)) event.accepted = true
       return
     }
 
@@ -268,7 +202,7 @@ Item {
   }
 
   onOpenedChanged: {
-    if (!root.opened && searchInput.activeFocus) Qt.inputMethod.reset()
+    if (!root.opened) view.resetComposition()
   }
 
   function open(payloadJson) {
@@ -282,50 +216,36 @@ Item {
     root.selectedIdentity = AppDeckModel.initialSelectedIdentity(root.apps)
     root.opened = true
     Qt.callLater(function() {
-      searchInput.forceActiveFocus()
+      view.focusInput()
       root.revealSelected()
     })
   }
 
   function setSearchQuery(query) {
-    root.clearWindowSelection()
     root.clearPendingFocus()
-    root.searchQuery = query
-    if (searchInput.text !== query) searchInput.text = query
-    root.updateSearchResults(null, 0, false)
+    view.setInputText(query)
+    selection.search(query)
   }
 
   function select(delta) {
-    root.clearWindowSelection()
     root.clearPendingFocus()
-    if (!root.apps.length) return
-    var index = root.selectedIndex
-    if (index < 0) index = delta < 0 ? root.apps.length - 1 : 0
-    else index = ((index + delta) % root.apps.length + root.apps.length) % root.apps.length
-    root.selectedIdentity = root.apps[index].identity
-    root.revealSelected()
+    selection.select(delta)
   }
 
   function selectAbsolute(index) {
-    root.clearWindowSelection()
     root.clearPendingFocus()
-    if (!root.apps.length) return
-    index = Math.max(0, Math.min(index, root.apps.length - 1))
-    root.selectedIdentity = root.apps[index].identity
-    root.revealSelected()
+    selection.selectAbsolute(index)
   }
 
   function selectPage(direction) {
-    var rowExtent = root.rowHeight + appList.spacing
-    var pageSize = Math.max(1, Math.floor((appList.height + appList.spacing) / rowExtent))
     root.selectAbsolute(AppDeckModel.pageSelectionIndex(
-      root.selectedIndex, root.apps.length, pageSize, direction))
+      root.selectedIndex, root.apps.length, view.pageSize, direction))
   }
 
   function revealSelected() {
     Qt.callLater(function() {
       if (root.selectedIndex >= 0)
-        appList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+        view.revealApp(root.selectedIndex)
     })
   }
 
@@ -339,36 +259,8 @@ Item {
   }
 
   function focusWindow(target) {
-    root.clearPendingFocus()
     root.footerMessage = ""
-    target = target ? root.windowById(target.id) : null
-    var command = AppDeckModel.focusCommand(target)
-    if (!target || !target.handle || !command) {
-      root.reportFocusError()
-      return
-    }
-
-    root.pendingFocusHandle = target.handle
-    var appIdentity = root.selectedIdentity
-    var targetId = target.id
-    root.opened = false
-    Qt.callLater(function() {
-      if (!root.pendingFocusHandle) return
-      var current = root.selectedIdentity === appIdentity ? root.windowById(targetId) : null
-      if (!current || current.handle !== root.pendingFocusHandle) {
-        root.reportFocusError()
-        return
-      }
-      focusAcknowledgementTimer.restart()
-      try {
-        Hyprland.dispatch(command)
-        if (root.pendingFocusHandle
-            && root.pendingFocusHandle.activated === true)
-          root.dismiss()
-      } catch (error) {
-        root.reportFocusError()
-      }
-    })
+    focusController.request(target)
   }
 
   function activateSelectedApp() {
@@ -455,103 +347,28 @@ Item {
   function requestForceKill() {
     root.clearPendingFocus()
     root.footerMessage = ""
-    if (root.forceKillRequests.length) {
-      root.footerMessage = "A Kill request is still pending."
-      return
-    }
-    if (!root.selectedApp || root.selectedApp.kind !== "running") {
-      root.footerMessage = "Unable to request Kill."
-      return
-    }
-
-    root.pendingForceKillApp = {
-      identity: root.selectedApp.identity,
-      name: root.selectedApp.name,
-      windowCount: root.selectedApp.windows.length,
-      forceKillScope: AppDeckModel.forceKillScope(root.selectedApp)
-    }
-    forceKillConfirm.selectedIndex = 1
+    killController.requestForceKill()
+    if (root.pendingForceKillApp) view.beginConfirmation()
     root.restoreListFocus()
   }
 
   function completeForceKill(confirmed) {
-    var pendingApp = root.pendingForceKillApp
-    root.pendingForceKillApp = null
     root.footerMessage = ""
-    var currentApp = null
-    if (confirmed && pendingApp) {
-      root.rebuild()
-      for (var i = 0; i < root.allApps.length; i++) {
-        if (root.allApps[i].identity === pendingApp.identity) {
-          currentApp = root.allApps[i]
-          break
-        }
-      }
-    }
-    var targets = AppDeckModel.forceKillTargets(
-      currentApp || pendingApp, confirmed, root.allApps)
-    if (!confirmed) {
-      root.restoreListFocus()
-      return
-    }
-    if (!currentApp || currentApp.windowCount !== pendingApp.windowCount
-        || !AppDeckModel.forceKillScopeMatches(
-          currentApp, pendingApp.forceKillScope)) {
-      root.footerMessage = "Kill target changed. Review it again."
-      root.restoreListFocus()
-      return
-    }
-    if (!AppDeckModel.forceKillScopeIsExclusive(currentApp, root.allApps)) {
-      root.footerMessage = "Kill target is shared with another Running App."
-      root.restoreListFocus()
-      return
-    }
-    if (!targets.length)
-      root.footerMessage = "No valid Kill targets."
-    else if (!Hyprland.requestSocketPath)
-      root.footerMessage = "Unable to send Kill request."
-    else {
-      root.forceKillResponseCount = 0
-      root.forceKillFailureCount = 0
-      root.forceKillRequests = targets
-    }
+    killController.completeForceKill(confirmed)
     root.restoreListFocus()
   }
 
-  function recordForceKillResponse(succeeded) {
-    if (!root.forceKillRequests.length) return
-    root.forceKillResponseCount++
-    if (!succeeded) root.forceKillFailureCount++
-    if (root.forceKillResponseCount < root.forceKillRequests.length) return
-
-    var requestCount = root.forceKillRequests.length
-    var failures = root.forceKillFailureCount
-    root.forceKillRequests = []
-    if (failures === requestCount)
-      root.footerMessage = "Unable to send Kill request."
-    else if (failures)
-      root.footerMessage = "Some Kill requests could not be sent."
-    else
-      root.footerMessage = "Kill requested for " + requestCount
-        + (requestCount === 1 ? " owner." : " owners.")
-    root.restoreListFocus()
-  }
-
-  function clearPendingFocus() {
-    focusAcknowledgementTimer.stop()
-    root.pendingFocusHandle = null
-  }
+  function clearPendingFocus() { focusController.cancel() }
 
   function clearForceKillConfirmation() {
-    root.pendingForceKillApp = null
+    killController.cancelReview()
   }
 
   function restoreListFocus() {
     if (root.opened)
       Qt.callLater(function() {
         if (!root.opened) return
-        if (root.pendingForceKillApp) keyCatcher.forceActiveFocus()
-        else searchInput.forceActiveFocus()
+        view.focusControls()
       })
   }
 
@@ -592,672 +409,18 @@ Item {
     onTriggered: root.rebuild()
   }
 
-  Timer {
-    id: focusAcknowledgementTimer
-    interval: 250
-    repeat: false
-    onTriggered: root.reportFocusError()
-  }
-
-  Connections {
-    target: Hyprland.toplevels
-    function onValuesChanged() { root.scheduleRebuild() }
-  }
-
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      var name = event ? String(event.name) : ""
-      if (name === "activewindow" || name === "activewindowv2")
-        Hyprland.refreshToplevels()
-      root.scheduleRebuild()
-    }
-  }
-
-  Instantiator {
-    model: Hyprland.toplevels.values || []
-    delegate: Connections {
-      required property var modelData
-      target: modelData
-      function onLastIpcObjectChanged() { root.scheduleRebuild() }
-      function onWaylandHandleChanged() { root.scheduleRebuild() }
-    }
-  }
-
-  Instantiator {
-    model: root.forceKillRequests
-    delegate: Socket {
-      id: forceKillSocket
-      required property string modelData
-      property bool finished: false
-      property bool requestWritten: false
-      property string responseBuffer: ""
-      property Timer responseTimeout: Timer {
-        interval: 1500
-        running: !forceKillSocket.finished
-        repeat: false
-        onTriggered: forceKillSocket.acceptResponse("", true)
-      }
-
-      path: Hyprland.requestSocketPath
-      connected: !finished
-
-      function acceptResponse(chunk, ended) {
-        if (finished) return
-        var state = AppDeckModel.forceKillResponseState(
-          responseBuffer, chunk, ended)
-        responseBuffer = state.response
-        if (state.done) finish(state.succeeded)
-      }
-
-      function finish(succeeded) {
-        if (finished) return
-        finished = true
-        root.recordForceKillResponse(succeeded)
-      }
-
-      onConnectionStateChanged: {
-        if (finished) return
-        if (connected) {
-          requestWritten = true
-          write("dispatch " + modelData)
-          flush()
-        } else if (requestWritten) {
-          acceptResponse("", true)
-        }
-      }
-      onError: function(error) { forceKillSocket.acceptResponse("", true) }
-
-      parser: SplitParser {
-        splitMarker: ""
-        onRead: function(response) {
-          forceKillSocket.acceptResponse(response, false)
-        }
-      }
-    }
-  }
-
-  Connections {
-    target: root.pendingFocusHandle
-    function onActivatedChanged() {
-      if (root.pendingFocusHandle
-          && root.pendingFocusHandle.activated === true)
-        root.dismiss()
-    }
-  }
-
-  Connections {
-    target: DesktopEntries.applications
-    function onValuesChanged() { root.scheduleRebuild() }
-  }
-
   Connections {
     target: root.appLibrary
     function onAppsChanged() { root.scheduleRebuild() }
   }
 
   Component.onCompleted: {
-    Hyprland.refreshToplevels()
+    desktop.refresh()
     root.rebuild()
   }
 
-  PanelWindow {
-    id: panel
-    visible: root.opened
-    anchors { top: true; right: true; bottom: true; left: true }
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "appdeck"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.opened
-      ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-
-    Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.dismiss()
-    }
-
-    BorderSurface {
-      id: card
-      width: Math.min(Style.space(980), panel.width - Style.gapsOut * 2)
-      height: Math.min(Style.space(660), panel.height - Style.gapsOut * 2)
-      anchors.centerIn: parent
-      radius: root.cornerRadius
-      color: root.background
-      borderSpec: root.borderSpec
-      padding: Style.spacing.panelPadding
-
-      MouseArea { anchors.fill: parent; onClicked: {} }
-
-      Item {
-        id: keyCatcher
-        anchors.fill: parent
-        z: root.pendingForceKillApp ? 20 : 0
-        focus: root.opened
-
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) { root.handleKey(event) }
-
-        ConfirmDialog {
-          id: forceKillConfirm
-
-          anchors.fill: parent
-          opened: root.pendingForceKillApp !== null
-          z: 10
-          message: root.pendingForceKillApp
-            ? "Kill “" + root.pendingForceKillApp.name + "” and its "
-              + root.pendingForceKillApp.windowCount
-              + (root.pendingForceKillApp.windowCount === 1
-                ? " App Window?" : " App Windows?")
-              + " Unsaved work may be lost."
-            : ""
-          confirmText: "Kill"
-          background: root.background
-          foreground: root.foreground
-          scrim: root.scrim
-          selectedBackground: root.selectedBackground
-          selectedText: root.selectedText
-          fontFamily: root.fontFamily
-          cornerRadius: root.cornerRadius
-          onCanceled: root.completeForceKill(false)
-          onConfirmed: root.completeForceKill(true)
-        }
-      }
-
-      ColumnLayout {
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: Style.spacing.panelGap
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.spacing.controlGap
-
-          ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Style.spacing.xs
-
-            Text {
-              text: "Apps"
-              textFormat: Text.PlainText
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.weight: Font.DemiBold
-            }
-
-            TextInput {
-              id: searchInput
-              Layout.fillWidth: true
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              selectionColor: root.selectedBackground
-              selectedTextColor: root.selectedText
-              selectByMouse: true
-              clip: true
-              onTextEdited: root.setSearchQuery(text)
-              Keys.priority: Keys.BeforeItem
-              Keys.onPressed: function(event) { root.handleKey(event) }
-
-              Text {
-                anchors.fill: parent
-                visible: !searchInput.text && !searchInput.preeditText
-                text: "Type to search…"
-                textFormat: Text.PlainText
-                color: root.foreground
-                opacity: 0.58
-                font: searchInput.font
-              }
-            }
-          }
-
-          Text {
-            text: root.apps.length
-              + (root.hasSearchQuery ? " matches" : " apps")
-              + " · " + root.allApps.length + " running"
-              + " · " + root.totalWindows
-              + (root.totalWindows === 1 ? " window" : " windows")
-            textFormat: Text.PlainText
-            color: root.foreground
-            opacity: 0.58
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        Rectangle {
-          Layout.fillWidth: true
-          height: Style.spacing.hairline
-          color: Util.alpha(root.foreground, 0.16)
-        }
-
-        GridLayout {
-          id: contentLayout
-          columns: card.width < Style.space(720) ? 1 : 2
-          columnSpacing: Style.spacing.panelGap
-          rowSpacing: Style.spacing.panelGap
-          Layout.fillWidth: true
-          Layout.fillHeight: true
-
-          Item {
-            Layout.preferredWidth: contentLayout.columns === 2 ? contentLayout.width * 0.37 : -1
-            Layout.fillWidth: contentLayout.columns === 1
-            Layout.fillHeight: true
-
-            ListView {
-              id: appList
-              anchors.fill: parent
-              clip: true
-              spacing: Style.spacing.sm
-              model: root.apps
-
-              delegate: BorderSurface {
-                id: appRow
-                required property int index
-                required property var modelData
-
-                readonly property bool selected: index === root.selectedIndex
-                width: ListView.view.width
-                height: root.rowHeight
-                radius: root.cornerRadius
-                color: selected ? root.selectedBackground : "transparent"
-                borderSpec: selected
-                  ? Border.controlSpec("selected", root.foreground, Color.accent)
-                  : Border.none()
-
-                RowLayout {
-                  anchors.fill: parent
-                  anchors.leftMargin: Style.spacing.rowPaddingX
-                  anchors.rightMargin: Style.spacing.rowPaddingX
-                  spacing: Style.spacing.controlGap
-
-                  Image {
-                    Layout.preferredWidth: Style.font.iconLarge
-                    Layout.preferredHeight: Style.font.iconLarge
-                    sourceSize.width: width * Screen.devicePixelRatio
-                    sourceSize.height: height * Screen.devicePixelRatio
-                    source: root.iconSource(appRow.modelData.icon)
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                  }
-
-                  ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Style.spacing.xs
-
-                    Text {
-                      Layout.fillWidth: true
-                      text: appRow.modelData.name
-                      textFormat: Text.PlainText
-                      color: appRow.selected ? root.selectedText : root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.body
-                      font.weight: Font.Medium
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      Layout.fillWidth: true
-                      text: appRow.modelData.kind === "launch"
-                        ? "Not running · " + appRow.modelData.desktopEntryId + " · Start Running"
-                        : appRow.modelData.windowCount
-                          + (appRow.modelData.windowCount === 1 ? " window" : " windows")
-                          + (appRow.modelData.workspaces.length
-                            ? " · Workspace " + appRow.modelData.workspaces.join(", ") : "")
-                      textFormat: Text.PlainText
-                      color: appRow.selected ? root.selectedText : root.foreground
-                      opacity: 0.58
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                    }
-                  }
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: {
-                    root.selectAbsolute(appRow.index)
-                    root.activateSelectedApp()
-                  }
-                }
-              }
-
-              Text {
-                visible: root.apps.length === 0
-                anchors.centerIn: parent
-                width: parent.width - Style.spacing.panelPadding * 2
-                text: root.hasSearchQuery
-                  ? "No matching apps"
-                  : "No Apps"
-                textFormat: Text.PlainText
-                horizontalAlignment: Text.AlignHCenter
-                color: root.foreground
-                opacity: 0.58
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-              }
-            }
-          }
-
-          BorderSurface {
-            id: detailCard
-            Layout.fillWidth: true
-            Layout.fillHeight: contentLayout.columns === 2
-            Layout.preferredHeight: Style.space(280)
-            Layout.minimumHeight: Style.space(240)
-            radius: root.cornerRadius
-            color: Style.normalFill
-            borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
-            padding: Style.spacing.panelPadding
-
-            ColumnLayout {
-              id: detailContent
-              anchors.fill: parent
-              anchors.topMargin: parent.contentTopInset
-              anchors.rightMargin: parent.contentRightInset
-              anchors.bottomMargin: parent.contentBottomInset
-              anchors.leftMargin: parent.contentLeftInset
-              spacing: Style.spacing.md
-
-              RowLayout {
-                Layout.fillWidth: true
-                spacing: Style.spacing.controlGap
-
-                BorderSurface {
-                  Layout.preferredWidth: Style.space(42)
-                  Layout.preferredHeight: Style.space(42)
-                  radius: root.cornerRadius
-                  color: root.background
-                  borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
-
-                  Image {
-                    anchors.centerIn: parent
-                    width: Style.font.iconLarge
-                    height: Style.font.iconLarge
-                    sourceSize.width: width * Screen.devicePixelRatio
-                    sourceSize.height: height * Screen.devicePixelRatio
-                    source: root.iconSource(root.selectedApp ? root.selectedApp.icon : "")
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                  }
-                }
-
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  spacing: Style.spacing.xs
-
-                  RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Style.spacing.controlGap
-
-                    Text {
-                      text: root.selectedApp ? root.selectedApp.name : "No selection"
-                      textFormat: Text.PlainText
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.heading
-                      font.weight: Font.DemiBold
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      Layout.fillWidth: true
-                      text: root.selectedApp && root.selectedApp.kind === "launch"
-                        ? root.selectedApp.desktopEntryId
-                        : root.selectedApp && root.selectedApp.appId
-                          ? root.selectedApp.appId : "Unidentified App"
-                      textFormat: Text.PlainText
-                      color: root.foreground
-                      opacity: 0.5
-                      font.family: Style.font.family
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideMiddle
-                    }
-                  }
-
-                  Text {
-                    Layout.fillWidth: true
-                    text: root.selectedApp && root.selectedApp.kind === "launch"
-                      ? "Not running · Ready to start"
-                      : root.selectedApp
-                      ? root.selectedApp.windowCount
-                        + (root.selectedApp.windowCount === 1 ? " window" : " windows")
-                        + (root.selectedApp.workspaces.length
-                          ? " · Workspace " + root.selectedApp.workspaces.join(", ") : "")
-                      : "No App Windows"
-                    textFormat: Text.PlainText
-                    color: root.foreground
-                    opacity: 0.58
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                }
-              }
-
-              Text {
-                visible: !root.selectedApp || root.selectedApp.kind === "launch"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                text: root.selectedApp ? "Installed application · Ready to start" : "No selection"
-                textFormat: Text.PlainText
-                color: root.foreground
-                opacity: 0.58
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                wrapMode: Text.Wrap
-              }
-
-              ListView {
-                id: windowList
-                readonly property var recentWindow: AppDeckModel.mostRecentlyActiveAppWindow(root.selectedApp)
-                visible: root.selectedApp !== null && root.selectedApp.kind === "running"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                spacing: Style.spacing.sm
-                model: visible ? root.selectedApp.windows : []
-                onModelChanged: {
-                  if (root.windowSelectionActive) root.revealSelectedWindow()
-                  else positionViewAtBeginning()
-                }
-
-                delegate: BorderSurface {
-                  id: windowRow
-                  objectName: "appWindow:" + modelData.id
-                  required property var modelData
-                  readonly property bool recent: windowList.recentWindow !== null
-                    && modelData.id === windowList.recentWindow.id
-                  readonly property bool selected: root.windowSelectionActive
-                    ? modelData.id === root.selectedWindowId : recent
-                  width: ListView.view.width
-                  height: windowInfo.implicitHeight + Style.spacing.rowPaddingX * 2
-                  radius: root.cornerRadius
-                  color: selected ? root.selectedBackground
-                    : windowMouse.containsMouse ? Style.normalFill : root.background
-                  borderSpec: Border.controlSpec(selected ? "selected" : "normal", root.foreground, Color.accent)
-
-                  ColumnLayout {
-                    id: windowInfo
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.margins: Style.spacing.rowPaddingX
-                    spacing: Style.spacing.xs
-
-                    Text {
-                      Layout.fillWidth: true
-                      text: modelData.title || "Untitled window"
-                      textFormat: Text.PlainText
-                      color: windowRow.selected ? root.selectedText : root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.body
-                      wrapMode: Text.Wrap
-                      maximumLineCount: 2
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      Layout.fillWidth: true
-                      text: (modelData.workspace ? "Workspace " + modelData.workspace : "No workspace")
-                        + (recent ? " · Most recent" : "")
-                      textFormat: Text.PlainText
-                      color: windowRow.selected ? root.selectedText : root.foreground
-                      opacity: 0.58
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                    }
-                  }
-
-                  MouseArea {
-                    id: windowMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.selectedWindowAppIdentity = root.selectedIdentity
-                      root.selectedWindowId = windowRow.modelData.id
-                      root.focusSelectedApp()
-                    }
-                  }
-                }
-              }
-
-              Rectangle {
-                Layout.fillWidth: true
-                height: Style.spacing.hairline
-                color: Util.alpha(root.foreground, 0.16)
-              }
-
-              GridLayout {
-                Layout.fillWidth: true
-                columns: 1
-                columnSpacing: Style.spacing.controlGap
-                rowSpacing: Style.spacing.sm
-
-                Text {
-                  Layout.fillWidth: true
-                  text: root.selectedApp && root.selectedApp.kind === "launch"
-                    ? "Start this installed application"
-                    : "Close / Kill · all App Windows"
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  opacity: 0.58
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
-
-                RowLayout {
-                  Layout.fillWidth: root.compactActions
-                  Layout.alignment: Qt.AlignRight
-                  spacing: Style.spacing.sm
-
-                  Button {
-                    objectName: "focusSelected"
-                    Layout.fillWidth: root.compactActions
-                    text: root.selectedApp && root.selectedApp.kind === "launch"
-                      ? "Start Running  ↵" : "Focus  ↵"
-                    bordered: true
-                    enabled: root.selectedApp !== null && !root.pendingLaunchIdentity
-                    opacity: enabled ? 1 : 0.5
-                    background: root.selectedBackground
-                    foreground: root.selectedText
-                    fontFamily: root.fontFamily
-                    onClicked: root.activateSelectedApp()
-                  }
-
-                  Button {
-                    objectName: "closeSelected"
-                    visible: root.selectedApp !== null
-                      && root.selectedApp.kind === "running"
-                    Layout.fillWidth: root.compactActions
-                    text: "Close  Del"
-                    bordered: true
-                    enabled: root.selectedApp !== null
-                      && root.selectedApp.kind === "running"
-                    opacity: enabled ? 1 : 0.5
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                    onClicked: root.requestGracefulClose()
-                  }
-
-                  Button {
-                    objectName: "killSelected"
-                    visible: root.selectedApp !== null
-                      && root.selectedApp.kind === "running"
-                    Layout.fillWidth: root.compactActions
-                    text: "Kill  ⇧Del"
-                    bordered: true
-                    enabled: root.selectedApp !== null
-                      && root.selectedApp.kind === "running"
-                      && !root.forceKillRequests.length
-                    opacity: enabled ? 1 : 0.5
-                    foreground: Color.urgent
-                    fontFamily: root.fontFamily
-                    onClicked: root.requestForceKill()
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.spacing.controlGap
-
-          Text {
-            visible: root.footerMessage === ""
-            text: (root.windowSelectionActive
-              ? "↑↓ Apps · Tab / Shift+Tab Windows · Enter "
-              : "↑↓ Apps · Tab Windows · Enter ")
-              + (root.selectedApp && root.selectedApp.kind === "launch"
-                ? "Start Running" : "Focus")
-            textFormat: Text.PlainText
-            color: root.foreground
-            opacity: 0.5
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            Layout.fillWidth: true
-            visible: root.footerMessage !== ""
-            text: root.footerMessage
-            textFormat: Text.PlainText
-            horizontalAlignment: Text.AlignRight
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-
-          Text {
-            visible: root.footerMessage === ""
-            Layout.fillWidth: true
-            text: "Esc Clear / Close"
-            textFormat: Text.PlainText
-            horizontalAlignment: Text.AlignRight
-            color: root.foreground
-            opacity: 0.5
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-      }
-    }
+  AppDeckView {
+    id: view
+    controller: root
   }
 }

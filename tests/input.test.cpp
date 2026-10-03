@@ -25,7 +25,6 @@ public:
     return nullptr;
   }
   Q_INVOKABLE QObject *focus() { return window() ? window()->activeFocusItem() : nullptr; }
-  Q_INVOKABLE void suppressEvents(QObject *source) { if (source) source->blockSignals(true); }
   Q_INVOKABLE QQuickItem *item(const QString &name) {
     auto find = [&](auto &&self, QQuickItem *parent) -> QQuickItem * {
       if (parent->objectName() == name) return parent;

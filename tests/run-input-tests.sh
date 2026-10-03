@@ -13,4 +13,8 @@ c++ -std=c++17 -fPIC -shared -I"$test_dir" "$repo/tests/input.test.cpp" \
   -o "$test_dir/InputTest/libinputtest.so" $(pkg-config --cflags --libs Qt6Quick Qt6Qml Qt6Gui)
 cp "$repo/tests/input.test.qml" "$test_dir/shell.qml"
 APPDECK_TEST_REPO="$repo" QML_IMPORT_PATH="$test_dir${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
-  timeout 30s quickshell -p "$test_dir/shell.qml" --no-color
+  timeout 30s quickshell -p "$test_dir/shell.qml" --no-color 2>&1 | tee "$test_dir/test.log"
+if rg -q 'ReferenceError:|TypeError:|Binding loop|Unable to assign|Cannot assign' "$test_dir/test.log"; then
+  echo "QML runtime error detected" >&2
+  exit 1
+fi
