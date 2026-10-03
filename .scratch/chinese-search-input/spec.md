@@ -5,7 +5,7 @@ Status: resolved
 
 ## 目标
 
-让 AppDeck 的 Search Query 支持中文输入法组词、候选确认和连续输入，同时保留现有搜索排序、应用选择和安全确认行为。本文记录修复方案与实施结果；代码已修复，桌面中另一份 ProcDeck 安装未替换。
+让 AppDeck 的 Search Query 支持中文输入法组词、候选确认和连续输入，同时保留现有搜索排序、应用选择和安全确认行为。本文记录修复方案与实施结果；代码已修复并推送，桌面已切换到 AppDeck。
 
 ## 已确认的原因
 
@@ -126,4 +126,10 @@ omarchy plugin validate .
 - 真实 Fcitx5 拼音检查确认候选框可见，Space 选词得到「中文」，连续选词得到「中文输入」。组词期间 Enter 按默认行为提交原始拼音，面板保持打开，启动次数为 0。因此验收以「组词按键不误触发应用动作」为准，不强制 Enter 改变输入法自身的确认习惯。
 - 真实 Fcitx5 的候选导航、Escape 和 Delete 未触发应用动作；退出组词、打开并取消 Kill 确认后，可继续提交「中文输入」，没有 Kill 请求。该检查使用虚构 Running App 和 Close 接口，不操作真实应用。
 - 另一个失败用例复现了空预编辑带 Cursor 属性时 Close 快捷键被持续屏蔽的问题；结合 `preeditText` 调整保护条件后通过，真实 Fcitx5 路径也通过。
-- 当前桌面仍加载 `/home/zjh/Projects/ProcDeck` 中的 `procdeck.app`。本次修改仅位于 AppDeck 仓库，未切换插件安装或快捷键配置，未提交或推送。
+- 代码修复完成时仍保留旧 ProcDeck 安装；随后按用户要求推送修复，并移除旧安装，详见部署记录。
+
+## 部署记录
+
+2026-10-03：修复已推送到 GitHub `main`。移除 `procdeck.app` 的插件链接和配置入口，将旧 `/home/zjh/Projects/ProcDeck` 源目录移入回收站。启用链接到当前仓库的 `appdeck.app`，将 `ALT + SPACE` 从 ProcDeck 切换到 AppDeck。配置修改前已备份。
+
+Hyprland 配置检查无错误。运行中的 Omarchy Shell 已发现并启用 AppDeck，实际打开及关闭覆盖层均通过；旧 ProcDeck 不再出现在插件列表中。
