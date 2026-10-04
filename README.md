@@ -9,6 +9,8 @@ AppDeck is an application launcher and window switcher for the Omarchy desktop. 
 - Chinese input and Fcitx5 support through your desktop input method.
 - Request all windows of an app to close, or force-kill the app after confirmation.
 
+![AppDeck application search and launch panel](preview.png)
+
 ## Installation
 
 ### Requirements
